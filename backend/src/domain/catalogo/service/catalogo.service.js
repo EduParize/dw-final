@@ -66,8 +66,9 @@ function paraResposta(skin) {
  * Mantém o catálogo de skins em memória, indexado por id.
  * `baixarSkins` vem de fora (infraestructure/external) para o service não conhecer HTTP.
  */
-export function criarCatalogoService({ baixarSkins }) {
+export function criarCatalogoService({ baixarSkins, agora = () => new Date() }) {
   let porId = new Map();
+  let atualizadoEm = null;
 
   function garantirCarregado() {
     if (porId.size === 0) {
@@ -97,7 +98,13 @@ export function criarCatalogoService({ baixarSkins }) {
         throw new Error('Catálogo baixado sem nenhuma skin válida');
       }
       porId = novo;
+      atualizadoEm = agora();
       return novo.size;
+    },
+
+    /** Quantas skins estão carregadas e quando foi o último download que deu certo. */
+    status() {
+      return { total_skins: porId.size, atualizado_em: atualizadoEm };
     },
 
     /** Uso interno (inventário): devolve a skin normalizada ou undefined. */
