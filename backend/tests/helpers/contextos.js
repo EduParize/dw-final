@@ -37,11 +37,14 @@ export async function criarPrecoServiceDeTeste({ atualizado = true, ...opcoes } 
  * Monta os mesmos contextos que o configuration/factory monta,
  * trocando o banco e os downloads externos por versões em memória.
  */
-export async function criarContextosDeTeste({ precosAtualizados = true } = {}) {
+export async function criarContextosDeTeste({ precosAtualizados = true, opcoesPreco = {} } = {}) {
   const usuarioRepository = criarUsuarioRepositoryEmMemoria();
   const inventarioRepository = criarInventarioRepositoryEmMemoria({ usuarioRepository });
   const catalogoService = await criarCatalogoDeTeste();
-  const { precoService, precoRepository } = await criarPrecoServiceDeTeste({ atualizado: precosAtualizados });
+  const { precoService, precoRepository } = await criarPrecoServiceDeTeste({
+    atualizado: precosAtualizados,
+    ...opcoesPreco,
+  });
 
   return {
     usuario: { usuarioRepository, usuarioService: criarUsuarioService({ usuarioRepository }) },
