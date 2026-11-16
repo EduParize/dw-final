@@ -36,6 +36,8 @@ function normalizarSkin(item) {
     maxFloat: Number(item.max_float ?? 1),
     stattrak: Boolean(item.stattrak),
     souvenir: Boolean(item.souvenir),
+    // Facas sem pintura ("★ Karambit"): sem pattern, sem min/max float e sem desgaste no nome de mercado.
+    semPintura: !item.pattern,
     textoBusca: normalizarTexto(nomeCompleto),
   };
 }
@@ -53,6 +55,7 @@ function paraResposta(skin) {
     max_float: skin.maxFloat,
     stattrak: skin.stattrak,
     souvenir: skin.souvenir,
+    sem_pintura: skin.semPintura,
   };
 }
 

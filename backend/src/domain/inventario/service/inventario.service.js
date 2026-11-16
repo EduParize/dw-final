@@ -6,6 +6,13 @@ const PRECO_MAXIMO = 9_999_999_999.99; // limite do NUMERIC(12,2)
 const ID_MAXIMO = 2_147_483_647; // limite do INTEGER
 const DATA_MINIMA = '2012-08-21'; // lançamento do CS:GO
 const REGEX_DATA = /^\d{4}-\d{2}-\d{2}$/;
+// Data de "hoje" no fuso do Brasil, mesmo com o servidor (ou o container) em UTC.
+// O locale en-CA formata como AAAA-MM-DD.
+const FORMATO_DATA_BRASIL = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+
+function hojeNoBrasil() {
+  return FORMATO_DATA_BRASIL.format(new Date());
+}
 
 /** Desgaste a partir do float (0.07 já é Minimal Wear, 0.15 já é Field-Tested etc.). */
 export function calcularDesgaste(float) {
@@ -17,13 +24,14 @@ export function calcularDesgaste(float) {
  * Nome usado pelos sites de preço: `[StatTrak™ ]<Arma> | <Nome> (<Desgaste>)`.
  * Partindo do nome completo do catálogo, facas ("★ Karambit | Doppler") ficam
  * "★ StatTrak™ Karambit | Doppler (Factory New)", como o mercado escreve.
+ * Facas sem pintura não têm desgaste no nome: "★ Karambit" (desgaste = null).
  */
 export function montarMarketHashName(skin, stattrak, desgaste) {
   let nome = skin.nomeCompleto;
   if (stattrak) {
     nome = nome.startsWith('★ ') ? `★ StatTrak™ ${nome.slice(2)}` : `StatTrak™ ${nome}`;
   }
-  return `${nome} (${desgaste})`;
+  return desgaste ? `${nome} (${desgaste})` : nome;
 }
 
 // 0.1 → "0.10", 0.7 → "0.70", 0.065 → "0.065" (só para as mensagens de erro)
@@ -44,7 +52,7 @@ function validarDataCompra(valor) {
   if (valor < DATA_MINIMA) {
     throw new ValidationError('Data da compra anterior ao lançamento do CS:GO (21/08/2012)');
   }
-  if (valor > new Date().toISOString().slice(0, 10)) {
+  if (valor > hojeNoBrasil()) {
     throw new ValidationError('Data da compra não pode ser futura');
   }
   return valor;
@@ -73,8 +81,11 @@ function validarDados(skin, dados) {
   if (typeof precoPago !== 'number' || !Number.isFinite(precoPago)) {
     throw new ValidationError('Preço pago é obrigatório e deve ser um número');
   }
-  if (precoPago < 0 || precoPago > PRECO_MAXIMO) {
+  if (precoPago < 0) {
     throw new ValidationError('Preço pago deve ser maior ou igual a zero');
+  }
+  if (precoPago > PRECO_MAXIMO) {
+    throw new ValidationError('Preço pago acima do valor máximo permitido (R$ 9.999.999.999,99)');
   }
 
   return { float, stattrak, precoPago, dataCompra: validarDataCompra(dataCompra) };
@@ -99,7 +110,7 @@ function interpretarId(valor) {
  * Se a skin sumiu do catálogo, os dados dela vêm null em vez de derrubar a listagem.
  */
 function montarItem(linha, skin) {
-  const desgaste = calcularDesgaste(linha.float);
+  const desgaste = skin?.semPintura ? null : calcularDesgaste(linha.float);
   return {
     id: linha.id,
     skin_id: linha.skin_id,
