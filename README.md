@@ -359,9 +359,11 @@ Login: POST /api/auth/login { email, senha }
 
 ```text
 [React]   ─> GET /api/inventario/resumo   (com token)
-[Service] soma o preço pago e o valor atual de todos os itens do usuário e calcula:
-          total pago, valor total atual, lucro total, variação %,
-          skin mais valorizada e skin mais desvalorizada
+[Service] monta todos os itens do usuário (com preços) e calcula:
+          ├─ total pago: soma de todos os itens
+          ├─ valor total atual e lucro total: só os itens com preço
+          ├─ variação %: lucro total ÷ preço pago pelos itens com preço × 100
+          └─ skin mais valorizada e mais desvalorizada: maior e menor variação %
 [React]   mostra os 4 cards do topo da tela
 ```
 
@@ -437,7 +439,9 @@ porque o preço geral de "Karambit | Doppler" é o da fase mais barata, e não o
   floats 0.16 e 0.37 recebem o mesmo preço.
 - Os preços variam entre os sites (a Steam costuma ser mais cara). A tela sempre mostra a fonte usada.
 - Se uma skin não tiver preço em nenhuma fonte, o valor atual aparece como "sem preço" e ela
-  não entra no cálculo do lucro total.
+  não entra no valor atual total, no lucro total nem na variação do resumo (mas entra no total pago).
+- Skins com preço pago zero (ganhas em drop) entram no lucro total, mas não têm variação % e não
+  concorrem a mais valorizada/desvalorizada.
 
 ---
 
@@ -536,6 +540,17 @@ Exemplo de item do catálogo:
 | `PUT` | `/api/inventario/:id` 🔒 | Edita float, StatTrak, preço pago ou data da compra | 200, 400, 401, 404 |
 | `DELETE` | `/api/inventario/:id` 🔒 | Remove uma skin | 204, 401, 404 |
 
+Filtros e ordenação de `GET /api/inventario` (todos opcionais e combináveis; valor inválido → 400):
+
+| Parâmetro | Valores | Observação |
+|---|---|---|
+| `arma` | ex.: `AK-47`, `AWP` | Nome exato da arma, sem diferenciar maiúsculas |
+| `desgaste` | `Factory New`, `Minimal Wear`, `Field-Tested`, `Well-Worn`, `Battle-Scarred` | Facas sem pintura não têm desgaste e não aparecem nesse filtro |
+| `stattrak` | `true`, `false` | |
+| `ordenar` | `lucro`, `valor`, `data` | Sempre do maior para o menor (`data` = data da compra). Itens sem preço ou sem data vão para o fim. Sem `ordenar`, os cadastros mais recentes vêm primeiro |
+
+Exemplo: `GET /api/inventario?arma=AK-47&stattrak=true&ordenar=lucro`
+
 ### Preços
 | Método | Rota | Descrição | Respostas |
 |---|---|---|---|
@@ -600,6 +615,28 @@ Resposta `201` (valores ilustrativos):
   "criado_em": "2026-11-16T18:05:00.000Z"
 }
 ```
+
+### Exemplo: `GET /api/inventario/resumo`
+
+```json
+{
+  "quantidade_itens": 5,
+  "quantidade_sem_preco": 1,
+  "total_pago": 686.00,
+  "valor_atual_total": 8809.70,
+  "lucro_total": 8124.70,
+  "variacao_percentual": 1186.09,
+  "mais_valorizada": {
+    "id": 1, "skin_id": "skin-xxxxx", "arma": "AK-47", "nome": "Redline", "fase": null,
+    "imagem": "https://...", "market_hash_name": "AK-47 | Redline (Field-Tested)",
+    "preco_pago": 85.00, "valor_atual": 217.80, "lucro": 132.80, "variacao_percentual": 156.24
+  },
+  "mais_desvalorizada": { "...": "mesmo formato" }
+}
+```
+
+Com o inventário vazio, os totais vêm `0` e `variacao_percentual`, `mais_valorizada` e
+`mais_desvalorizada` vêm `null`.
 
 ### Exemplos de erro
 ```json
@@ -682,7 +719,8 @@ backend/tests/
 │   ├── usuario.service.test.js      # validações, hash bcrypt, login, JWT, troca de senha
 │   ├── catalogo.service.test.js     # carga, busca, limite, 503 sem catálogo
 │   ├── preco.service.test.js        # formato de cada fonte, conversão para R$, fases, falha parcial, cache
-│   └── inventario.service.test.js   # desgaste, market_hash_name, validações, CRUD, isolamento entre usuários
+│   ├── inventario.service.test.js   # desgaste, market_hash_name, valores, validações, CRUD, isolamento
+│   └── inventario.listagem.test.js  # filtros, ordenação e resumo
 └── integration/
     └── api.test.js                  # rotas HTTP de ponta a ponta com Supertest
 ```
@@ -696,7 +734,8 @@ O que é coberto:
 | Catálogo | Busca sem acento e em qualquer ordem; limite; falha no download mantém o catálogo anterior; 503 antes de carregar |
 | Preços | Extração do preço de cada fonte; conversão para R$; fases das Dopplers; fonte que falha mantém a cópia anterior; downloads simultâneos viram um só; cache restaurado do banco; validade de 24h |
 | Inventário | Valor atual com troca de fonte, menor preço, lucro, variação e "sem preço"; todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
-| API | Rotas protegidas sem token → 401; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
+| Listagem e resumo | Filtros por arma, desgaste e StatTrak (sozinhos e combinados); ordenação por lucro, valor e data com itens sem preço/data no fim; filtros inválidos ou repetidos → 400; totais, variação e destaques do resumo; inventário vazio |
+| API | Rotas protegidas sem token → 401; `/resumo` não é confundido com um id; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
 
 Os repositories (SQL) e as factories não são cobertos por esses testes, porque dependem do
 PostgreSQL. Eles são verificados rodando a API com o banco (Docker).

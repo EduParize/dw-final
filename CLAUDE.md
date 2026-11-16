@@ -61,7 +61,12 @@ Layered flow: `route → middleware/auth → controller → service → reposito
   - Doppler phases: a catalog skin with `fase` only uses sources that have a price for that phase (CSFloat, Buff163). Steam and Skinport return `null` for it.
   - `inventario.service` turns the per-source BRL prices into `valor_atual`, `menor_preco`, `lucro` and `variacao_percentual` (`calcularValores`). Steam is the default source, with fallback in `FONTES_PRECO` order.
   - The price constants live in `domain/preco/entity/preco.constants.js`.
-- **Pending (stages 5–6):** inventory filters, ordering and `GET /inventario/resumo` (which must be declared before `/:id` in the router); the 24h scheduler; and `GET /precos/status` / `POST /precos/atualizar`.
+- **Listing and summary:** filters (`arma`, `desgaste`, `stattrak`) and ordering (`lucro`, `valor`, `data`) are applied in `inventario.service` **after** building the items, not in SQL, because weapon, wear and prices come from the catalog and the price cache.
+  - Query values are validated by `interpretarFiltros`: invalid or repeated → 400.
+  - Ordering is descending with nulls last. Ties keep the DB order (newest first).
+  - `calcularResumo`: `total_pago` counts every item, while the value, profit and % totals count only items with a price.
+  - `GET /inventario/resumo` is declared before `/:id` in the router.
+- **Pending (stage 6):** the 24h scheduler and `GET /precos/status` / `POST /precos/atualizar`.
 
 ## Backend tests
 
