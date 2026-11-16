@@ -307,6 +307,49 @@ describe('API', () => {
       expect(doDono.body.preco_pago).toBe(10);
     });
 
+    test('GET /api/inventario aceita filtros e ordenação pela URL', async () => {
+      const cadastrar = (dados) => request(app).post('/api/inventario').set(auth(token)).send(dados);
+      const { body: ak } = await cadastrar({ skin_id: AK, float: 0.162, preco_pago: 85 });
+      const { body: awp } = await cadastrar({ skin_id: AWP, float: 0.2, preco_pago: 100 });
+
+      const porArma = await request(app).get('/api/inventario').query({ arma: 'AWP' }).set(auth(token));
+      expect(porArma.status).toBe(200);
+      expect(porArma.body.map((i) => i.id)).toEqual([awp.id]);
+
+      const porLucro = await request(app).get('/api/inventario').query({ ordenar: 'lucro' }).set(auth(token));
+      expect(porLucro.body.map((i) => i.id)).toEqual([ak.id, awp.id]);
+    });
+
+    test('GET /api/inventario com filtro inválido → 400', async () => {
+      const res = await request(app).get('/api/inventario').query({ ordenar: 'nome' }).set(auth(token));
+      expect(res.status).toBe(400);
+      expect(res.body.erro).toMatch(/Ordenação inválida/);
+    });
+
+    test('GET /api/inventario?arma=a&arma=b (filtro repetido) → 400', async () => {
+      const res = await request(app).get('/api/inventario?arma=AK-47&arma=AWP').set(auth(token));
+      expect(res.status).toBe(400);
+    });
+
+    test('GET /api/inventario/resumo não é confundido com um id', async () => {
+      await request(app).post('/api/inventario').set(auth(token)).send({ skin_id: AK, float: 0.162, preco_pago: 85 });
+
+      const res = await request(app).get('/api/inventario/resumo').set(auth(token));
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        quantidade_itens: 1,
+        total_pago: 85,
+        valor_atual_total: 217.8,
+        lucro_total: 132.8,
+        variacao_percentual: 156.24,
+      });
+    });
+
+    test('GET /api/inventario/resumo exige token', async () => {
+      const res = await request(app).get('/api/inventario/resumo');
+      expect(res.status).toBe(401);
+    });
+
     test('id que não é número → 404 (sem erro 500)', async () => {
       const res = await request(app).get('/api/inventario/abc').set(auth(token));
       expect(res.status).toBe(404);
