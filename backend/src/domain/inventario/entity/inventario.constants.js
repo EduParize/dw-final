@@ -7,7 +7,7 @@ export const FAIXAS_DESGASTE = Object.freeze([
   { nome: 'Battle-Scarred', min: 0.45, max: 1.0 },
 ]);
 
-/** Ordenações aceitas na listagem (usadas na Etapa 5). */
+/** Ordenações aceitas na listagem: sempre do maior para o menor (lucro, valor atual, data da compra). */
 export const ORDENACOES_VALIDAS = Object.freeze(['lucro', 'valor', 'data']);
 
 /** Campos que o PUT /api/inventario/:id pode alterar. */
