@@ -17,6 +17,22 @@ async function iniciar() {
     console.error('[catalogo] falha ao carregar:', err.message || err);
   }
 
+  // Preços: usa o cache salvo no banco e, se ele estiver incompleto ou com mais de 24h,
+  // baixa de novo em segundo plano (a API já responde com o cache antigo enquanto isso).
+  const { precoService } = contextos.preco;
+  const fontesNoBanco = await precoService.carregarDoBanco();
+  console.log(`[precos] ${fontesNoBanco} fontes carregadas do cache`);
+  if (precoService.precisaAtualizar()) {
+    console.log('[precos] cache incompleto ou velho, baixando preços e cotação...');
+    precoService
+      .atualizar()
+      .then((resultado) => {
+        const ok = resultado.filter((r) => r.ok).map((r) => r.fonte);
+        console.log(`[precos] atualizados: ${ok.join(', ') || 'nenhum'}`);
+      })
+      .catch((err) => console.error('[precos] falha ao atualizar:', err.message || err));
+  }
+
   const app = criarApp(contextos);
   const server = app.listen(env.port, () => {
     console.log(`[api] rodando em http://localhost:${env.port}/api (${env.nodeEnv})`);
