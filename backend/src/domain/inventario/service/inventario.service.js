@@ -1,5 +1,6 @@
 import { NotFoundError, UnauthorizedError, ValidationError } from '../../common/errors/index.js';
 import { CAMPOS_EDITAVEIS, FAIXAS_DESGASTE } from '../entity/inventario.constants.js';
+import { FONTE_PRECO_PADRAO, FONTES_PRECO } from '../../preco/entity/preco.constants.js';
 
 const VIOLACAO_CHAVE_ESTRANGEIRA = '23503'; // código do PostgreSQL
 const PRECO_MAXIMO = 9_999_999_999.99; // limite do NUMERIC(12,2)
@@ -104,37 +105,71 @@ function interpretarId(valor) {
   return id;
 }
 
+function arredondar(valor) {
+  return Math.round(valor * 100) / 100;
+}
+
 /**
- * Junta a linha do banco com os dados do catálogo.
- * Os campos de preço ficam null até a Etapa 4 (preços) preencher.
- * Se a skin sumiu do catálogo, os dados dela vêm null em vez de derrubar a listagem.
+ * A partir dos preços em R$ de cada fonte ({ steam: 246.11, skinport: null, ... }) calcula:
+ * - valor atual: o da fonte padrão (Steam) ou, sem ela, o da próxima fonte com preço;
+ * - menor preço entre as fontes;
+ * - lucro = valor atual − preço pago, e variação % = lucro ÷ preço pago × 100
+ *   (null quando o preço pago é zero, porque não há base para a porcentagem).
+ * Sem preço em nenhuma fonte, tudo vem null ("sem preço").
  */
-function montarItem(linha, skin) {
-  const desgaste = skin?.semPintura ? null : calcularDesgaste(linha.float);
+export function calcularValores(precos, precoPago) {
+  const disponiveis = FONTES_PRECO.filter((fonte) => precos[fonte] != null).map((fonte) => ({
+    fonte,
+    valor: precos[fonte],
+  }));
+
+  if (disponiveis.length === 0) {
+    return { valor_atual: null, fonte_valor_atual: null, menor_preco: null, lucro: null, variacao_percentual: null };
+  }
+
+  const atual = disponiveis.find((d) => d.fonte === FONTE_PRECO_PADRAO) ?? disponiveis[0];
+  const menor = disponiveis.reduce((min, d) => (d.valor < min.valor ? d : min));
+  const lucro = arredondar(atual.valor - precoPago);
+
   return {
-    id: linha.id,
-    skin_id: linha.skin_id,
-    arma: skin?.arma ?? null,
-    nome: skin?.nome ?? null,
-    imagem: skin?.imagem ?? null,
-    raridade: skin?.raridade ?? null,
-    float: linha.float,
-    desgaste,
-    stattrak: linha.stattrak,
-    market_hash_name: skin ? montarMarketHashName(skin, linha.stattrak, desgaste) : null,
-    preco_pago: linha.preco_pago,
-    data_compra: linha.data_compra,
-    precos: null,
-    valor_atual: null,
-    fonte_valor_atual: null,
-    menor_preco: null,
-    lucro: null,
-    variacao_percentual: null,
-    criado_em: linha.criado_em,
+    valor_atual: atual.valor,
+    fonte_valor_atual: atual.fonte,
+    menor_preco: { fonte: menor.fonte, valor: menor.valor },
+    lucro,
+    variacao_percentual: precoPago > 0 ? arredondar((lucro / precoPago) * 100) : null,
   };
 }
 
-export function criarInventarioService({ inventarioRepository, catalogoService }) {
+export function criarInventarioService({ inventarioRepository, catalogoService, precoService }) {
+  /**
+   * Junta a linha do banco com os dados do catálogo e os preços do cache.
+   * Se a skin sumiu do catálogo, os dados dela (e os preços) vêm null em vez de derrubar a listagem.
+   */
+  function montarItem(linha, skin) {
+    const desgaste = skin?.semPintura ? null : calcularDesgaste(linha.float);
+    const marketHashName = skin ? montarMarketHashName(skin, linha.stattrak, desgaste) : null;
+    const precos = precoService.precosEmReais(marketHashName, skin?.fase);
+
+    return {
+      id: linha.id,
+      skin_id: linha.skin_id,
+      arma: skin?.arma ?? null,
+      nome: skin?.nome ?? null,
+      fase: skin?.fase ?? null,
+      imagem: skin?.imagem ?? null,
+      raridade: skin?.raridade ?? null,
+      float: linha.float,
+      desgaste,
+      stattrak: linha.stattrak,
+      market_hash_name: marketHashName,
+      preco_pago: linha.preco_pago,
+      data_compra: linha.data_compra,
+      precos,
+      ...calcularValores(precos, linha.preco_pago),
+      criado_em: linha.criado_em,
+    };
+  }
+
   return {
     async listar(usuarioId) {
       const linhas = await inventarioRepository.listarPorUsuario(usuarioId);

@@ -10,9 +10,5 @@ export const FAIXAS_DESGASTE = Object.freeze([
 /** Ordenações aceitas na listagem (usadas na Etapa 5). */
 export const ORDENACOES_VALIDAS = Object.freeze(['lucro', 'valor', 'data']);
 
-/** Fontes de preço (usadas na Etapa 4). */
-export const FONTES_PRECO = Object.freeze(['steam', 'skinport', 'csfloat', 'buff163']);
-export const FONTE_PRECO_PADRAO = 'steam';
-
 /** Campos que o PUT /api/inventario/:id pode alterar. */
 export const CAMPOS_EDITAVEIS = Object.freeze(['float', 'stattrak', 'preco_pago', 'data_compra']);

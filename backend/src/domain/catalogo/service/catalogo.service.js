@@ -38,6 +38,8 @@ function normalizarSkin(item) {
     souvenir: Boolean(item.souvenir),
     // Facas sem pintura ("★ Karambit"): sem pattern, sem min/max float e sem desgaste no nome de mercado.
     semPintura: !item.pattern,
+    // Dopplers: cada fase é uma skin separada no catálogo, mas o market_hash_name é o mesmo.
+    fase: item.phase ?? null,
     textoBusca: normalizarTexto(nomeCompleto),
   };
 }
@@ -56,6 +58,7 @@ function paraResposta(skin) {
     stattrak: skin.stattrak,
     souvenir: skin.souvenir,
     sem_pintura: skin.semPintura,
+    fase: skin.fase,
   };
 }
 
