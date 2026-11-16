@@ -90,7 +90,8 @@ backend/src/
 │   │   ├── entity/inventario.constants.js   # faixas de desgaste, ordenações válidas
 │   │   └── service/inventario.service.js
 │   └── preco/
-│       └── service/preco.service.js
+│       ├── entity/preco.constants.js        # fontes de preço, fonte padrão, validade do cache (24h)
+│       └── service/preco.service.js         # normaliza os arquivos, guarda o cache, converte para R$
 └── infraestructure/
     ├── db/postgres/
     │   ├── connection.js           # pool do pg e inicialização do schema
@@ -239,11 +240,19 @@ Rotas do frontend: `/login` e `/registro` são públicas; todas as outras exigem
 | Preços: Buff163 | CSGO Trader | `https://prices.csgotrader.app/latest/buff163.json` | Em USD |
 | Cotação USD → BRL | AwesomeAPI | `https://economia.awesomeapi.com.br/json/last/USD-BRL` | Usa o campo `bid` |
 
-Cada arquivo de preços é um objeto cuja chave é o **`market_hash_name`** da skin, por exemplo:
+Cada arquivo de preços é um objeto cuja chave é o **`market_hash_name`** da skin, mas cada fonte
+tem um formato. O `preco.service` usa um preço por fonte:
 
-```json
-"AK-47 | Redline (Field-Tested)": { "starting_at": 23.46, "suggested_price": null }
-```
+| Fonte | Formato (USD) | Preço usado | Preço por fase (Doppler) |
+|---|---|---|---|
+| Steam | `{ last_24h, last_7d, last_30d, last_90d }` | média mais recente disponível | não |
+| Skinport | `{ starting_at, suggested_price }` | `starting_at` (menor oferta) | não |
+| CSFloat | `{ price, starting_at: { price, doppler }, doppler }` | `price` (menor oferta) | sim |
+| Buff163 | `{ starting_at: { price, doppler }, highest_order }` | `starting_at.price` (menor oferta) | sim |
+
+Os arquivos vêm com gzip (≈500 KB cada) e têm ≈35 a 47 mil itens. Antes de salvar, o backend reduz
+cada um para `{ "<market_hash_name>": { "preco": 23.27, "fases": { "Ruby": 6135.46 } } }`,
+descartando os itens sem preço.
 
 > As fontes de preço são mantidas pela comunidade e não são oficiais. Por isso o backend
 > sempre guarda a última cópia baixada e continua funcionando com ela se um download falhar.
@@ -259,10 +268,14 @@ servidor inicia
   │
   ├─ 1. Conecta no PostgreSQL e cria as tabelas, se não existirem
   ├─ 2. Baixa o catálogo (skins.json) e guarda em memória, indexado por id
-  ├─ 3. Baixa os arquivos de preço (Steam, Skinport, CSFloat, Buff163)
-  │      └─ salva na tabela cache_precos com a data de atualização
-  ├─ 4. Baixa a cotação USD-BRL e salva
-  └─ 5. Agenda os passos 2 a 4 para rodarem de novo a cada 24h
+  ├─ 3. Lê o cache de preços e a cotação da tabela cache_precos para a memória
+  ├─ 4. Se faltar alguma fonte ou o cache tiver mais de 24h, em segundo plano:
+  │      ├─ baixa os arquivos de preço (Steam, Skinport, CSFloat, Buff163) e a cotação USD-BRL
+  │      └─ salva cada fonte na tabela cache_precos com a data de atualização
+  └─ 5. Agenda os passos 2 e 4 para rodarem de novo a cada 24h
+
+As consultas de preço usam só o cache em memória; nenhuma requisição do usuário dispara download.
+Se algum download falhar → mantém a cópia anterior do cache e registra o erro no log.
 
 Se algum download falhar → mantém a cópia anterior do cache e registra o erro no log.
 ```
@@ -406,9 +419,18 @@ desgaste no nome de mercado. Para elas:
   servidor esteja em UTC.
 
 ### Cálculos
-- `valor_atual_brl = preco_usd × cotacao_usd_brl`
-- `lucro = valor_atual_brl − preco_pago`
-- `variacao_percentual = lucro ÷ preco_pago × 100`
+- `preco_brl = preco_usd × cotacao_usd_brl`, para cada fonte, arredondado em 2 casas
+- `valor_atual` = preço da **Steam**; se a Steam não tiver o item, o da próxima fonte com preço
+  (Skinport → CSFloat → Buff163). O campo `fonte_valor_atual` diz qual foi usada.
+- `menor_preco` = menor preço entre as fontes que têm o item
+- `lucro = valor_atual − preco_pago`
+- `variacao_percentual = lucro ÷ preco_pago × 100` (fica `null` se o preço pago for 0)
+
+### Dopplers
+No catálogo, cada fase (Phase 1–4, Ruby, Sapphire, Black Pearl, Emerald) é uma skin separada,
+com o campo `fase`, mas todas têm o mesmo `market_hash_name`. Para uma skin com fase, só valem as
+fontes que informam o preço daquela fase (CSFloat e Buff163). Steam e Skinport ficam `null`,
+porque o preço geral de "Karambit | Doppler" é o da fase mais barata, e não o de uma Ruby.
 
 ### Observações
 - Os sites cobram **por faixa de desgaste**, não por float exato. Duas Redline Field-Tested com
@@ -450,7 +472,7 @@ usuarios 1 ──── N itens_inventario
 | Coluna | Tipo | Descrição |
 |---|---|---|
 | `fonte` | `VARCHAR(20) PRIMARY KEY` | `steam`, `skinport`, `csfloat`, `buff163` ou `cotacao` |
-| `conteudo` | `JSONB NOT NULL` | JSON baixado |
+| `conteudo` | `JSONB NOT NULL` | Preços normalizados em USD (`{ "<market_hash_name>": { "preco", "fases"? } }`) ou, na linha `cotacao`, `{ "valor", "data" }` |
 | `atualizado_em` | `TIMESTAMP NOT NULL` | Data e hora do download |
 
 O desgaste, o preço atual e o lucro **não são salvos**: são calculados pelo service a cada requisição.
@@ -499,7 +521,8 @@ Exemplo de item do catálogo:
   "max_float": 0.7,
   "stattrak": true,
   "souvenir": false,
-  "sem_pintura": false
+  "sem_pintura": false,
+  "fase": null
 }
 ```
 
@@ -554,6 +577,7 @@ Resposta `201` (valores ilustrativos):
   "skin_id": "skin-xxxxx",
   "arma": "AK-47",
   "nome": "Redline",
+  "fase": null,
   "imagem": "https://...",
   "raridade": { "nome": "Classified", "cor": "#d32ce6" },
   "float": 0.162,
@@ -650,12 +674,14 @@ npm run test:coverage    # gera o relatório de cobertura em backend/coverage/
 backend/tests/
 ├── setup-env.js                     # variáveis de ambiente dos testes (JWT_SECRET, BCRYPT_ROUNDS=4...)
 ├── helpers/
-│   ├── catalogo.fixture.js          # skins de exemplo: AK, AWP, MP9 sem StatTrak, Karambit Doppler e vanilla
+│   ├── catalogo.fixture.js          # skins de exemplo: AK, AWP, MP9 sem StatTrak, Karambit Doppler (e Ruby) e vanilla
+│   ├── precos.fixture.js            # arquivos de preço no formato real de cada fonte + cotação de R$ 5,00
 │   ├── repositories-em-memoria.js   # repositories falsos (com UNIQUE no e-mail e ON DELETE CASCADE)
 │   └── contextos.js                 # monta os contextos como a factory, mas em memória
 ├── unit/
 │   ├── usuario.service.test.js      # validações, hash bcrypt, login, JWT, troca de senha
 │   ├── catalogo.service.test.js     # carga, busca, limite, 503 sem catálogo
+│   ├── preco.service.test.js        # formato de cada fonte, conversão para R$, fases, falha parcial, cache
 │   └── inventario.service.test.js   # desgaste, market_hash_name, validações, CRUD, isolamento entre usuários
 └── integration/
     └── api.test.js                  # rotas HTTP de ponta a ponta com Supertest
@@ -668,7 +694,8 @@ O que é coberto:
 | Usuário | Senha salva só como hash bcrypt; `senha_hash` nunca sai na resposta; e-mail normalizado e único (409, inclusive em cadastro simultâneo); login com a mesma mensagem para e-mail inexistente e senha errada; troca de senha exige `senha_atual` |
 | JWT | Token válido; token expirado, com outro segredo, sem assinatura (`alg: none`) ou com outro algoritmo → 401 |
 | Catálogo | Busca sem acento e em qualquer ordem; limite; falha no download mantém o catálogo anterior; 503 antes de carregar |
-| Inventário | Todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
+| Preços | Extração do preço de cada fonte; conversão para R$; fases das Dopplers; fonte que falha mantém a cópia anterior; downloads simultâneos viram um só; cache restaurado do banco; validade de 24h |
+| Inventário | Valor atual com troca de fonte, menor preço, lucro, variação e "sem preço"; todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
 | API | Rotas protegidas sem token → 401; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
 
 Os repositories (SQL) e as factories não são cobertos por esses testes, porque dependem do

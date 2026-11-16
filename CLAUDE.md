@@ -54,7 +54,14 @@ Layered flow: `route → middleware/auth → controller → service → reposito
   - Vanilla knives (`semPintura`, no `pattern` in the catalog) have no wear: `desgaste` is `null` and the name has no suffix.
 - **Database:** `infraestructure/db/postgres/schema.sql` runs on every startup. It is idempotent, so write `CREATE ... IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. There are no migrations. `connection.js` sets pg type parsers: NUMERIC becomes a JS number, and DATE stays a `"YYYY-MM-DD"` string to avoid timezone shifts. The column `"float"` must be double-quoted in SQL.
 - **Dates:** "today" for date validation is computed in the `America/Sao_Paulo` timezone, not UTC.
-- **Prices (stages 4–6, not built yet):** the plan is to download the CSGO Trader price files (Steam, Skinport, CSFloat, Buff163, all in USD) and the AwesomeAPI USD→BRL rate, store them in the `cache_precos` table (JSONB), refresh every 24h, and never call external APIs during a user request. The constants for these already exist in `domain/inventario/entity/inventario.constants.js`. Until this is built, the price fields in inventory responses are `null`. `GET /inventario/resumo` must be declared before `/:id` in the router.
+- **Prices (`domain/preco`):** `precoService` downloads the CSGO Trader price files (Steam, Skinport, CSFloat, Buff163, all USD) and the AwesomeAPI USD→BRL rate.
+  - Each source has a different JSON shape. `normalizarArquivoDePrecos` reduces it to `{ market_hash_name: { preco, fases? } }` before saving to `cache_precos` (one JSONB row per source plus a `cotacao` row).
+  - Lookups (`precosEmReais`) read only the **in-memory cache**. It is loaded from the DB at startup and refreshed by `atualizar()`, so a user request never triggers an external call.
+  - A source that fails to download keeps its previous copy. Concurrent `atualizar()` calls share one download.
+  - Doppler phases: a catalog skin with `fase` only uses sources that have a price for that phase (CSFloat, Buff163). Steam and Skinport return `null` for it.
+  - `inventario.service` turns the per-source BRL prices into `valor_atual`, `menor_preco`, `lucro` and `variacao_percentual` (`calcularValores`). Steam is the default source, with fallback in `FONTES_PRECO` order.
+  - The price constants live in `domain/preco/entity/preco.constants.js`.
+- **Pending (stages 5–6):** inventory filters, ordering and `GET /inventario/resumo` (which must be declared before `/:id` in the router); the 24h scheduler; and `GET /precos/status` / `POST /precos/atualizar`.
 
 ## Backend tests
 
@@ -62,7 +69,7 @@ Layered flow: `route → middleware/auth → controller → service → reposito
 
 - `setup-env.js` sets the env vars, including `BCRYPT_ROUNDS=4`.
 - `helpers/repositories-em-memoria.js` provides in-memory repositories with the same interface as the real ones. They imitate the unique e-mail constraint (code `23505`), the foreign-key error (`23503`) and `ON DELETE CASCADE`.
-- `helpers/catalogo.fixture.js` holds a slice of the real `skins.json`.
+- `helpers/catalogo.fixture.js` holds a slice of the real `skins.json`, and `helpers/precos.fixture.js` holds price files in each source's real format (exchange rate R$ 5,00).
 - `helpers/contextos.js` builds the same contexts as the factory, but in memory. Integration tests use `criarApp(await criarContextosDeTeste())`.
 - When you add a repository method, add it to the in-memory fake too.
 - In ESM tests, import `jest` from `@jest/globals` when you need `jest.useFakeTimers` etc.
