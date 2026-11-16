@@ -75,7 +75,7 @@ describe('catalogoService', () => {
 
     test('nomes que começam com o termo vêm primeiro', () => {
       const nomes = service.buscar('karambit').map((s) => s.nome_completo);
-      expect(nomes).toEqual(['★ Karambit', '★ Karambit | Doppler']);
+      expect(nomes).toEqual(['★ Karambit', '★ Karambit | Doppler', '★ Karambit | Doppler']);
       const awp = service.buscar('awp').map((s) => s.nome_completo);
       expect(awp[0]).toBe('AWP | Redline');
     });
@@ -103,6 +103,7 @@ describe('catalogoService', () => {
         stattrak: true,
         souvenir: false,
         sem_pintura: false,
+        fase: null,
       });
     });
   });
@@ -127,6 +128,11 @@ describe('catalogoService', () => {
       expect(faca.nome).toBe('★ Karambit');
       expect(faca.min_float).toBe(0);
       expect(faca.max_float).toBe(1);
+    });
+
+    test('Doppler: cada fase é um item com o campo fase', () => {
+      const fases = service.buscar('karambit doppler').map((s) => s.fase);
+      expect(fases).toEqual(expect.arrayContaining([null, 'Ruby']));
     });
 
     test('raridade que vem só como texto é normalizada', () => {

@@ -258,6 +258,22 @@ describe('API', () => {
       expect(res.status).toBe(404);
     });
 
+    test('a resposta traz os preços em R$, o valor atual e o lucro', async () => {
+      const res = await request(app)
+        .post('/api/inventario')
+        .set(auth(token))
+        .send({ skin_id: AK, float: 0.162, preco_pago: 85 });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        precos: { steam: 217.8, skinport: 114.8, csfloat: 116.35, buff163: 120.3 },
+        valor_atual: 217.8,
+        fonte_valor_atual: 'steam',
+        menor_preco: { fonte: 'skinport', valor: 114.8 },
+        lucro: 132.8,
+        variacao_percentual: 156.24,
+      });
+    });
+
     test('POST de faca sem pintura → desgaste null', async () => {
       const res = await request(app)
         .post('/api/inventario')
