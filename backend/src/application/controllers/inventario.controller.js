@@ -4,12 +4,16 @@ import { CAMPOS_EDITAVEIS } from '../../domain/inventario/entity/inventario.cons
 export function criarInventarioRouter({ inventarioService }) {
   const router = Router();
 
-  // GET /api/inventario
+  // GET /api/inventario?arma=AK-47&desgaste=Field-Tested&stattrak=true&ordenar=lucro
   router.get('/', async (req, res) => {
-    res.json(await inventarioService.listar(req.usuario.id));
+    const { arma, desgaste, stattrak, ordenar } = req.query;
+    res.json(await inventarioService.listar(req.usuario.id, { arma, desgaste, stattrak, ordenar }));
   });
 
-  // Etapa 5: GET /api/inventario/resumo precisa ser declarado ANTES de /:id.
+  // GET /api/inventario/resumo (declarado ANTES de /:id, senão "resumo" seria lido como id)
+  router.get('/resumo', async (req, res) => {
+    res.json(await inventarioService.resumo(req.usuario.id));
+  });
 
   // GET /api/inventario/:id
   router.get('/:id', async (req, res) => {
