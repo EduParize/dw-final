@@ -311,8 +311,8 @@ Login: POST /api/auth/login { email, senha }
    ├─ 2. Confere se o float está entre min_float e max_float → senão: 400
    ├─ 3. Confere se StatTrak existe para essa skin          → senão: 400
    ├─ 4. Confere se preco_pago >= 0                          → senão: 400
-   ├─ 5. Confere se data_compra é uma data válida e não futura → senão: 400
-   ├─ 6. Calcula o desgaste a partir do float
+   ├─ 5. Confere se data_compra é uma data válida, não futura e não anterior ao CS:GO → senão: 400
+   ├─ 6. Calcula o desgaste a partir do float (null para facas sem pintura)
    └─ 7. Chama o repository para salvar com o usuario_id do token
 [Repository] INSERT no PostgreSQL
 [Service] completa com preço atual e lucro → [Controller] responde 201
@@ -331,6 +331,8 @@ Login: POST /api/auth/login { email, senha }
    ├─ 2. Monta o market_hash_name:
    │       [StatTrak™ ]<Arma> | <Nome> (<Desgaste>)
    │       ex.: "StatTrak™ AK-47 | Redline (Field-Tested)"
+   │       facas: "★ StatTrak™ Karambit | Doppler (Factory New)"
+   │       facas sem pintura não têm desgaste: "★ Karambit"
    ├─ 3. Busca o preço desse nome em cada fonte do cache (em USD)
    ├─ 4. Converte para R$ com a cotação salva
    ├─ 5. Define o "valor atual" (fonte padrão: Steam) e o menor preço entre as fontes
@@ -387,7 +389,21 @@ Login: POST /api/auth/login { email, senha }
 
 ### Float válido por skin
 Cada skin tem seu próprio intervalo de float. Exemplo: a AK-47 | Redline só existe entre
-0.10 e 0.70, então um float 0.05 é recusado pela API.
+0.10 e 0.70, então um float 0.05 é recusado pela API. Os limites exatos (0.10 e 0.70) são aceitos.
+
+### Facas sem pintura
+As facas "vanilla" (ex.: `★ Karambit`, `★ Bayonet`) não têm pintura, intervalo de float nem
+desgaste no nome de mercado. Para elas:
+- o catálogo devolve `sem_pintura: true` (o frontend não deve mostrar a prévia do desgaste);
+- qualquer float de 0 a 1 é aceito;
+- o `desgaste` da resposta vem `null` e o `market_hash_name` fica sem o desgaste (`★ Karambit`).
+
+### StatTrak, preço e data da compra
+- `stattrak` só pode ser `true` se a skin existir na versão StatTrak™ (campo `stattrak` do catálogo).
+- `preco_pago` entre 0 (skin ganha de drop) e R$ 9.999.999.999,99 (limite do `NUMERIC(12,2)`).
+- `data_compra` é opcional, no formato `AAAA-MM-DD`, não pode ser futura nem anterior ao
+  lançamento do CS:GO (21/08/2012). "Hoje" é calculado no fuso de São Paulo, mesmo que o
+  servidor esteja em UTC.
 
 ### Cálculos
 - `valor_atual_brl = preco_usd × cotacao_usd_brl`
@@ -465,6 +481,27 @@ válido → 401).
 |---|---|---|---|
 | `GET` | `/api/catalogo?busca=` | Busca skins no catálogo | 200 |
 | `GET` | `/api/catalogo/:skinId` | Detalhes de uma skin do catálogo | 200, 404 |
+
+A busca exige pelo menos 2 caracteres, ignora maiúsculas e acentos, aceita as palavras em
+qualquer ordem e devolve no máximo `limite` itens (padrão 20, máximo 50). Se o catálogo não
+pôde ser baixado na inicialização, as rotas que dependem dele respondem `503`.
+
+Exemplo de item do catálogo:
+```json
+{
+  "id": "skin-91a429af4a60",
+  "arma": "AK-47",
+  "nome": "Redline",
+  "nome_completo": "AK-47 | Redline",
+  "imagem": "https://...",
+  "raridade": { "nome": "Classified", "cor": "#d32ce6" },
+  "min_float": 0.1,
+  "max_float": 0.7,
+  "stattrak": true,
+  "souvenir": false,
+  "sem_pintura": false
+}
+```
 
 ### Inventário (skins do usuário)
 | Método | Rota | Descrição | Respostas |
@@ -596,7 +633,50 @@ Na inicialização, o backend cria as tabelas automaticamente a partir do `schem
 
 ---
 
-## 11. Divisão sugerida da equipe
+## 11. Testes (backend)
+
+Os testes usam **Jest** e **Supertest** e **não precisam de banco nem de internet**: os
+repositories são trocados por versões em memória e o catálogo vem de uma fixture com um recorte
+do `skins.json` real. Isso é possível porque os services recebem as dependências pelas factories.
+
+```bash
+cd backend
+npm test                 # roda todos os testes
+npm run test:watch       # roda de novo a cada alteração
+npm run test:coverage    # gera o relatório de cobertura em backend/coverage/
+```
+
+```text
+backend/tests/
+├── setup-env.js                     # variáveis de ambiente dos testes (JWT_SECRET, BCRYPT_ROUNDS=4...)
+├── helpers/
+│   ├── catalogo.fixture.js          # skins de exemplo: AK, AWP, MP9 sem StatTrak, Karambit Doppler e vanilla
+│   ├── repositories-em-memoria.js   # repositories falsos (com UNIQUE no e-mail e ON DELETE CASCADE)
+│   └── contextos.js                 # monta os contextos como a factory, mas em memória
+├── unit/
+│   ├── usuario.service.test.js      # validações, hash bcrypt, login, JWT, troca de senha
+│   ├── catalogo.service.test.js     # carga, busca, limite, 503 sem catálogo
+│   └── inventario.service.test.js   # desgaste, market_hash_name, validações, CRUD, isolamento entre usuários
+└── integration/
+    └── api.test.js                  # rotas HTTP de ponta a ponta com Supertest
+```
+
+O que é coberto:
+
+| Área | Principais casos |
+|---|---|
+| Usuário | Senha salva só como hash bcrypt; `senha_hash` nunca sai na resposta; e-mail normalizado e único (409, inclusive em cadastro simultâneo); login com a mesma mensagem para e-mail inexistente e senha errada; troca de senha exige `senha_atual` |
+| JWT | Token válido; token expirado, com outro segredo, sem assinatura (`alg: none`) ou com outro algoritmo → 401 |
+| Catálogo | Busca sem acento e em qualquer ordem; limite; falha no download mantém o catálogo anterior; 503 antes de carregar |
+| Inventário | Todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
+| API | Rotas protegidas sem token → 401; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
+
+Os repositories (SQL) e as factories não são cobertos por esses testes, porque dependem do
+PostgreSQL. Eles são verificados rodando a API com o banco (Docker).
+
+---
+
+## 12. Divisão sugerida da equipe
 
 | Integrante | Responsabilidade |
 |---|---|

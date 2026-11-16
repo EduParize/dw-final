@@ -1,12 +1,23 @@
 import { env } from './configuration/env.js';
 import { criarApp } from './app.js';
+import { criarContextos } from './configuration/factory/index.js';
 import { fecharBanco, inicializarBanco } from './infraestructure/db/postgres/connection.js';
 
 async function iniciar() {
   await inicializarBanco();
   console.log('[db] conectado e tabelas verificadas');
 
-  const app = criarApp();
+  const contextos = criarContextos();
+
+  // Se o download falhar o servidor sobe mesmo assim: as rotas que dependem do catálogo respondem 503.
+  try {
+    const total = await contextos.catalogo.catalogoService.carregar();
+    console.log(`[catalogo] ${total} skins carregadas`);
+  } catch (err) {
+    console.error('[catalogo] falha ao carregar:', err.message || err);
+  }
+
+  const app = criarApp(contextos);
   const server = app.listen(env.port, () => {
     console.log(`[api] rodando em http://localhost:${env.port}/api (${env.nodeEnv})`);
   });
