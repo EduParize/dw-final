@@ -6,3 +6,4 @@ coverage
 *.local
 npm-debug.log*
 .DS_Store
+kanban.md
