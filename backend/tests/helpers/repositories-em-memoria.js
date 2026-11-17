@@ -61,6 +61,21 @@ export function criarUsuarioRepositoryEmMemoria() {
   };
 }
 
+export function criarPrecoRepositoryEmMemoria() {
+  const linhas = new Map();
+  return {
+    linhas,
+
+    async listar() {
+      return [...linhas.values()].map((linha) => structuredClone(linha));
+    },
+
+    async salvar(fonte, conteudo, atualizadoEm) {
+      linhas.set(fonte, { fonte, conteudo: structuredClone(conteudo), atualizado_em: atualizadoEm });
+    },
+  };
+}
+
 export function criarInventarioRepositoryEmMemoria({ usuarioRepository } = {}) {
   const itens = new Map();
   let proximoId = 1;

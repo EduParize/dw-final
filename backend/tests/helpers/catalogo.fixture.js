@@ -52,6 +52,20 @@ export const SKINS = [
     image: 'https://exemplo/karambit-doppler.png',
   },
   {
+    // Cada fase da Doppler é um item separado no catálogo, com o mesmo nome.
+    id: 'skin-karambit-doppler-ruby',
+    name: '★ Karambit | Doppler',
+    weapon: { id: 'weapon_knife_karambit', name: 'Karambit' },
+    pattern: { id: 'doppler', name: 'Doppler' },
+    rarity: { id: 'rarity_ancient_weapon', name: 'Covert', color: '#eb4b4b' },
+    min_float: 0.0,
+    max_float: 0.08,
+    stattrak: true,
+    souvenir: false,
+    phase: 'Ruby',
+    image: 'https://exemplo/karambit-doppler-ruby.png',
+  },
+  {
     id: 'skin-vanilla-weapon_knife_karambit',
     name: '★ Karambit',
     weapon: { id: 'weapon_knife_karambit', name: 'Karambit' },
@@ -81,4 +95,5 @@ export const AK = 'skin-ak-redline';
 export const AWP = 'skin-awp-redline';
 export const MP9_SEM_STATTRAK = 'skin-mp9-sand-dashed';
 export const KARAMBIT_DOPPLER = 'skin-karambit-doppler';
+export const KARAMBIT_DOPPLER_RUBY = 'skin-karambit-doppler-ruby';
 export const KARAMBIT_SEM_PINTURA = 'skin-vanilla-weapon_knife_karambit';

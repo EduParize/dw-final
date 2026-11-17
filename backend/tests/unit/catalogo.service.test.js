@@ -22,6 +22,14 @@ describe('catalogoService', () => {
       await expect(service.carregar()).rejects.toThrow('sem nenhuma skin válida');
     });
 
+    test('status: total de skins e data do último download que deu certo', async () => {
+      const agora = new Date('2026-11-16T12:00:00Z');
+      const service = criarCatalogoService({ baixarSkins: async () => SKINS, agora: () => agora });
+      expect(service.status()).toEqual({ total_skins: 0, atualizado_em: null });
+      await service.carregar();
+      expect(service.status()).toEqual({ total_skins: SKINS.length, atualizado_em: agora });
+    });
+
     test('mantém o catálogo anterior se um novo download falhar', async () => {
       let falhar = false;
       const service = criarCatalogoService({
@@ -75,7 +83,7 @@ describe('catalogoService', () => {
 
     test('nomes que começam com o termo vêm primeiro', () => {
       const nomes = service.buscar('karambit').map((s) => s.nome_completo);
-      expect(nomes).toEqual(['★ Karambit', '★ Karambit | Doppler']);
+      expect(nomes).toEqual(['★ Karambit', '★ Karambit | Doppler', '★ Karambit | Doppler']);
       const awp = service.buscar('awp').map((s) => s.nome_completo);
       expect(awp[0]).toBe('AWP | Redline');
     });
@@ -103,6 +111,7 @@ describe('catalogoService', () => {
         stattrak: true,
         souvenir: false,
         sem_pintura: false,
+        fase: null,
       });
     });
   });
@@ -127,6 +136,11 @@ describe('catalogoService', () => {
       expect(faca.nome).toBe('★ Karambit');
       expect(faca.min_float).toBe(0);
       expect(faca.max_float).toBe(1);
+    });
+
+    test('Doppler: cada fase é um item com o campo fase', () => {
+      const fases = service.buscar('karambit doppler').map((s) => s.fase);
+      expect(fases).toEqual(expect.arrayContaining([null, 'Ruby']));
     });
 
     test('raridade que vem só como texto é normalizada', () => {

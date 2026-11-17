@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import {
   calcularDesgaste,
+  calcularValores,
   criarInventarioService,
   montarMarketHashName,
 } from '../../src/domain/inventario/service/inventario.service.js';
@@ -13,10 +14,11 @@ import {
   AK,
   AWP,
   KARAMBIT_DOPPLER,
+  KARAMBIT_DOPPLER_RUBY,
   KARAMBIT_SEM_PINTURA,
   MP9_SEM_STATTRAK,
 } from '../helpers/catalogo.fixture.js';
-import { criarCatalogoDeTeste } from '../helpers/contextos.js';
+import { criarCatalogoDeTeste, criarPrecoServiceDeTeste } from '../helpers/contextos.js';
 import {
   criarInventarioRepositoryEmMemoria,
   criarUsuarioRepositoryEmMemoria,
@@ -73,6 +75,58 @@ describe('montarMarketHashName', () => {
   });
 });
 
+describe('calcularValores', () => {
+  const precos = (steam, skinport, csfloat, buff163) => ({ steam, skinport, csfloat, buff163 });
+
+  test('valor atual da Steam, menor preço entre as fontes, lucro e variação', () => {
+    expect(calcularValores(precos(217.8, 114.8, 116.35, 120.3), 85)).toEqual({
+      valor_atual: 217.8,
+      fonte_valor_atual: 'steam',
+      menor_preco: { fonte: 'skinport', valor: 114.8 },
+      lucro: 132.8,
+      variacao_percentual: 156.24,
+    });
+  });
+
+  test('sem preço na Steam, o valor atual vem da próxima fonte com preço', () => {
+    expect(calcularValores(precos(null, null, 116.35, 120.3), 85)).toMatchObject({
+      valor_atual: 116.35,
+      fonte_valor_atual: 'csfloat',
+    });
+  });
+
+  test('prejuízo: lucro e variação negativos', () => {
+    expect(calcularValores(precos(50, null, null, null), 100)).toMatchObject({
+      lucro: -50,
+      variacao_percentual: -50,
+    });
+  });
+
+  test('preço pago zero: lucro igual ao valor, variação null', () => {
+    expect(calcularValores(precos(10, null, null, null), 0)).toMatchObject({
+      lucro: 10,
+      variacao_percentual: null,
+    });
+  });
+
+  test('arredonda em 2 casas', () => {
+    expect(calcularValores(precos(10.1, null, null, null), 3)).toMatchObject({
+      lucro: 7.1,
+      variacao_percentual: 236.67,
+    });
+  });
+
+  test('sem preço em nenhuma fonte → tudo null', () => {
+    expect(calcularValores(precos(null, null, null, null), 85)).toEqual({
+      valor_atual: null,
+      fonte_valor_atual: null,
+      menor_preco: null,
+      lucro: null,
+      variacao_percentual: null,
+    });
+  });
+});
+
 describe('inventarioService', () => {
   let service;
   let repo;
@@ -87,6 +141,78 @@ describe('inventarioService', () => {
     service = criarInventarioService({
       inventarioRepository: repo,
       catalogoService: await criarCatalogoDeTeste(),
+      precoService: (await criarPrecoServiceDeTeste()).precoService,
+    });
+  });
+
+  describe('preços (cotação da fixture: R$ 5,00)', () => {
+    test('completa o item com os preços de cada fonte, valor atual e lucro', async () => {
+      const item = await service.cadastrar(USUARIO, dadosValidos());
+      expect(item).toMatchObject({
+        precos: { steam: 217.8, skinport: 114.8, csfloat: 116.35, buff163: 120.3 },
+        valor_atual: 217.8,
+        fonte_valor_atual: 'steam',
+        menor_preco: { fonte: 'skinport', valor: 114.8 },
+        lucro: 132.8,
+        variacao_percentual: 156.24,
+      });
+    });
+
+    test('StatTrak usa o preço da versão StatTrak', async () => {
+      const item = await service.cadastrar(USUARIO, dadosValidos({ stattrak: true }));
+      expect(item.precos.steam).toBe(441.9); // 88.38 × 5
+    });
+
+    test('o preço é por faixa de desgaste, não por float exato', async () => {
+      const a = await service.cadastrar(USUARIO, dadosValidos({ float: 0.16 }));
+      const b = await service.cadastrar(USUARIO, dadosValidos({ float: 0.37 }));
+      expect(a.precos).toEqual(b.precos);
+    });
+
+    test('Doppler com fase: preço da fase só nas fontes que separam fases', async () => {
+      const item = await service.cadastrar(
+        USUARIO,
+        dadosValidos({ skin_id: KARAMBIT_DOPPLER_RUBY, float: 0.01, preco_pago: 25000 }),
+      );
+      expect(item).toMatchObject({
+        fase: 'Ruby',
+        market_hash_name: '★ Karambit | Doppler (Factory New)',
+        precos: { steam: null, skinport: null, csfloat: 30677.3, buff163: 31068.8 },
+        valor_atual: 30677.3,
+        fonte_valor_atual: 'csfloat',
+      });
+    });
+
+    test('faca sem pintura usa o nome sem desgaste para achar o preço', async () => {
+      const item = await service.cadastrar(
+        USUARIO,
+        dadosValidos({ skin_id: KARAMBIT_SEM_PINTURA, float: 0.3, preco_pago: 7000 }),
+      );
+      expect(item.precos).toEqual({ steam: 8000, skinport: 4402, csfloat: 3733.5, buff163: 3795.65 });
+      expect(item.lucro).toBe(1000);
+    });
+
+    test('skin sem preço em nenhuma fonte → precos com null e valores null', async () => {
+      const item = await service.cadastrar(USUARIO, dadosValidos({ skin_id: MP9_SEM_STATTRAK, float: 0.3 }));
+      expect(item).toMatchObject({
+        precos: { steam: null, skinport: null, csfloat: null, buff163: null },
+        valor_atual: null,
+        fonte_valor_atual: null,
+        menor_preco: null,
+        lucro: null,
+        variacao_percentual: null,
+      });
+    });
+
+    test('cache de preços ainda vazio → todos os valores null', async () => {
+      const semPrecos = criarInventarioService({
+        inventarioRepository: repo,
+        catalogoService: await criarCatalogoDeTeste(),
+        precoService: (await criarPrecoServiceDeTeste({ atualizado: false })).precoService,
+      });
+      const item = await semPrecos.cadastrar(USUARIO, dadosValidos());
+      expect(item.valor_atual).toBeNull();
+      expect(item.lucro).toBeNull();
     });
   });
 
@@ -109,18 +235,6 @@ describe('inventarioService', () => {
         data_compra: '2025-10-02',
       });
       expect(repo.linhas.get(item.id).usuario_id).toBe(USUARIO);
-    });
-
-    test('preços e lucro ficam null até a etapa 4', async () => {
-      const item = await service.cadastrar(USUARIO, dadosValidos());
-      expect(item).toMatchObject({
-        precos: null,
-        valor_atual: null,
-        fonte_valor_atual: null,
-        menor_preco: null,
-        lucro: null,
-        variacao_percentual: null,
-      });
     });
 
     test('stattrak e data_compra são opcionais', async () => {
@@ -292,7 +406,7 @@ describe('inventarioService', () => {
         dataCompra: null,
       });
       const [item] = await service.listar(USUARIO);
-      expect(item).toMatchObject({ skin_id: 'skin-removida', arma: null, market_hash_name: null });
+      expect(item).toMatchObject({ skin_id: 'skin-removida', arma: null, market_hash_name: null, valor_atual: null });
     });
   });
 

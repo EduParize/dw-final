@@ -6,6 +6,7 @@ import { criarAuthRouter } from './application/controllers/auth.controller.js';
 import { criarUsuarioRouter } from './application/controllers/usuario.controller.js';
 import { criarCatalogoRouter } from './application/controllers/catalogo.controller.js';
 import { criarInventarioRouter } from './application/controllers/inventario.controller.js';
+import { criarPrecoRouter } from './application/controllers/preco.controller.js';
 
 export function criarApp(contextos) {
   const app = express();
@@ -31,7 +32,7 @@ export function criarApp(contextos) {
     autenticar,
     criarInventarioRouter({ inventarioService: contextos.inventario.inventarioService }),
   );
-  // Próximas etapas: api.use('/precos', precoRoutes);
+  api.use('/precos', criarPrecoRouter({ precoService: contextos.preco.precoService, autenticar }));
 
   app.use('/api', api);
 

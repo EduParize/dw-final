@@ -160,6 +160,60 @@ describe('API', () => {
     });
   });
 
+  describe('preços', () => {
+    test('GET /api/precos/status é público e traz a data de cada fonte e a cotação', async () => {
+      const res = await request(app).get('/api/precos/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        atualizado_em: expect.any(String),
+        fontes: {
+          steam: expect.any(String),
+          skinport: expect.any(String),
+          csfloat: expect.any(String),
+          buff163: expect.any(String),
+          cotacao: expect.any(String),
+        },
+        cotacao_usd_brl: 5,
+        atualizando: false,
+      });
+    });
+
+    test('POST /api/precos/atualizar exige token', async () => {
+      const res = await request(app).post('/api/precos/atualizar');
+      expect(res.status).toBe(401);
+    });
+
+    test('POST /api/precos/atualizar baixa de novo e devolve o resultado de cada fonte', async () => {
+      const token = await registrar();
+      const res = await request(app).post('/api/precos/atualizar').set(auth(token));
+      expect(res.status).toBe(200);
+      expect(res.body.resultado).toEqual([
+        { fonte: 'steam', ok: true },
+        { fonte: 'skinport', ok: true },
+        { fonte: 'csfloat', ok: true },
+        { fonte: 'buff163', ok: true },
+        { fonte: 'cotacao', ok: true },
+      ]);
+      expect(res.body.atualizado_em).toEqual(expect.any(String));
+    });
+
+    test('POST /api/precos/atualizar com todas as fontes fora do ar → 502', async () => {
+      const foraDoAr = async () => {
+        throw new Error('fora do ar');
+      };
+      app = criarApp(
+        await criarContextosDeTeste({
+          precosAtualizados: false,
+          opcoesPreco: { baixarPrecos: foraDoAr, baixarCotacao: foraDoAr },
+        }),
+      );
+      const token = await registrar();
+      const res = await request(app).post('/api/precos/atualizar').set(auth(token));
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({ erro: 'Não foi possível atualizar os preços: todas as fontes falharam' });
+    });
+  });
+
   describe('inventário', () => {
     let token;
     beforeEach(async () => {
@@ -258,6 +312,22 @@ describe('API', () => {
       expect(res.status).toBe(404);
     });
 
+    test('a resposta traz os preços em R$, o valor atual e o lucro', async () => {
+      const res = await request(app)
+        .post('/api/inventario')
+        .set(auth(token))
+        .send({ skin_id: AK, float: 0.162, preco_pago: 85 });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        precos: { steam: 217.8, skinport: 114.8, csfloat: 116.35, buff163: 120.3 },
+        valor_atual: 217.8,
+        fonte_valor_atual: 'steam',
+        menor_preco: { fonte: 'skinport', valor: 114.8 },
+        lucro: 132.8,
+        variacao_percentual: 156.24,
+      });
+    });
+
     test('POST de faca sem pintura → desgaste null', async () => {
       const res = await request(app)
         .post('/api/inventario')
@@ -289,6 +359,49 @@ describe('API', () => {
 
       const doDono = await request(app).get(`/api/inventario/${item.id}`).set(auth(token));
       expect(doDono.body.preco_pago).toBe(10);
+    });
+
+    test('GET /api/inventario aceita filtros e ordenação pela URL', async () => {
+      const cadastrar = (dados) => request(app).post('/api/inventario').set(auth(token)).send(dados);
+      const { body: ak } = await cadastrar({ skin_id: AK, float: 0.162, preco_pago: 85 });
+      const { body: awp } = await cadastrar({ skin_id: AWP, float: 0.2, preco_pago: 100 });
+
+      const porArma = await request(app).get('/api/inventario').query({ arma: 'AWP' }).set(auth(token));
+      expect(porArma.status).toBe(200);
+      expect(porArma.body.map((i) => i.id)).toEqual([awp.id]);
+
+      const porLucro = await request(app).get('/api/inventario').query({ ordenar: 'lucro' }).set(auth(token));
+      expect(porLucro.body.map((i) => i.id)).toEqual([ak.id, awp.id]);
+    });
+
+    test('GET /api/inventario com filtro inválido → 400', async () => {
+      const res = await request(app).get('/api/inventario').query({ ordenar: 'nome' }).set(auth(token));
+      expect(res.status).toBe(400);
+      expect(res.body.erro).toMatch(/Ordenação inválida/);
+    });
+
+    test('GET /api/inventario?arma=a&arma=b (filtro repetido) → 400', async () => {
+      const res = await request(app).get('/api/inventario?arma=AK-47&arma=AWP').set(auth(token));
+      expect(res.status).toBe(400);
+    });
+
+    test('GET /api/inventario/resumo não é confundido com um id', async () => {
+      await request(app).post('/api/inventario').set(auth(token)).send({ skin_id: AK, float: 0.162, preco_pago: 85 });
+
+      const res = await request(app).get('/api/inventario/resumo').set(auth(token));
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        quantidade_itens: 1,
+        total_pago: 85,
+        valor_atual_total: 217.8,
+        lucro_total: 132.8,
+        variacao_percentual: 156.24,
+      });
+    });
+
+    test('GET /api/inventario/resumo exige token', async () => {
+      const res = await request(app).get('/api/inventario/resumo');
+      expect(res.status).toBe(401);
     });
 
     test('id que não é número → 404 (sem erro 500)', async () => {

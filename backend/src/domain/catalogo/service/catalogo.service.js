@@ -38,6 +38,8 @@ function normalizarSkin(item) {
     souvenir: Boolean(item.souvenir),
     // Facas sem pintura ("★ Karambit"): sem pattern, sem min/max float e sem desgaste no nome de mercado.
     semPintura: !item.pattern,
+    // Dopplers: cada fase é uma skin separada no catálogo, mas o market_hash_name é o mesmo.
+    fase: item.phase ?? null,
     textoBusca: normalizarTexto(nomeCompleto),
   };
 }
@@ -56,6 +58,7 @@ function paraResposta(skin) {
     stattrak: skin.stattrak,
     souvenir: skin.souvenir,
     sem_pintura: skin.semPintura,
+    fase: skin.fase,
   };
 }
 
@@ -63,8 +66,9 @@ function paraResposta(skin) {
  * Mantém o catálogo de skins em memória, indexado por id.
  * `baixarSkins` vem de fora (infraestructure/external) para o service não conhecer HTTP.
  */
-export function criarCatalogoService({ baixarSkins }) {
+export function criarCatalogoService({ baixarSkins, agora = () => new Date() }) {
   let porId = new Map();
+  let atualizadoEm = null;
 
   function garantirCarregado() {
     if (porId.size === 0) {
@@ -94,7 +98,13 @@ export function criarCatalogoService({ baixarSkins }) {
         throw new Error('Catálogo baixado sem nenhuma skin válida');
       }
       porId = novo;
+      atualizadoEm = agora();
       return novo.size;
+    },
+
+    /** Quantas skins estão carregadas e quando foi o último download que deu certo. */
+    status() {
+      return { total_skins: porId.size, atualizado_em: atualizadoEm };
     },
 
     /** Uso interno (inventário): devolve a skin normalizada ou undefined. */
