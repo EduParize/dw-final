@@ -68,6 +68,7 @@ backend/src/
 ├── server.js                       # ponto de entrada: carrega .env, conecta no banco, sobe o app
 ├── configuration/
 │   ├── env.js                      # leitura das variáveis de ambiente
+│   ├── agendador.js                # confere a cada hora e baixa de novo catálogo/preços com 24h ou mais
 │   └── factory/                    # monta service + repository de cada contexto
 ├── application/
 │   ├── controllers/
@@ -272,7 +273,8 @@ servidor inicia
   ├─ 4. Se faltar alguma fonte ou o cache tiver mais de 24h, em segundo plano:
   │      ├─ baixa os arquivos de preço (Steam, Skinport, CSFloat, Buff163) e a cotação USD-BRL
   │      └─ salva cada fonte na tabela cache_precos com a data de atualização
-  └─ 5. Agenda os passos 2 e 4 para rodarem de novo a cada 24h
+  └─ 5. Inicia o agendador: a cada 1h confere o catálogo e os preços e baixa de novo o que
+         tiver 24h ou mais (ou que nunca carregou). Uma falha é tentada de novo na hora seguinte.
 
 As consultas de preço usam só o cache em memória; nenhuma requisição do usuário dispara download.
 Se algum download falhar → mantém a cópia anterior do cache e registra o erro no log.
@@ -377,11 +379,34 @@ Login: POST /api/auth/login { email, senha }
   `senha_atual`).
 - `DELETE /api/usuarios/me`: exclui a conta e todas as skins dela (`ON DELETE CASCADE`).
 
-### 6.7 Atualização manual dos preços
+### 6.7 Status e atualização manual dos preços
 
-- `POST /api/precos/atualizar`: força o download dos preços e da cotação fora do horário agendado.
-- `GET /api/precos/status`: informa a data da última atualização de cada fonte. O frontend mostra
-  "Preços atualizados em 13/11/2026 17:12".
+- `GET /api/precos/status` (público): data da última atualização de cada fonte e a cotação atual.
+  O frontend mostra "Preços atualizados em 13/11/2026 17:12" usando `atualizado_em`, que é a data
+  da fonte mais antiga (fica `null` enquanto alguma fonte nunca foi baixada).
+- `POST /api/precos/atualizar` (com token): força o download dos preços e da cotação fora do horário
+  agendado e espera terminar (alguns segundos). Se já houver um download em andamento, reaproveita
+  o mesmo. Responde 200 se ao menos uma fonte deu certo, com o resultado de cada uma; 502 se todas
+  falharam (o cache anterior continua valendo).
+
+Exemplo de `GET /api/precos/status`:
+```json
+{
+  "atualizado_em": "2026-11-16T22:12:51.882Z",
+  "fontes": {
+    "steam": "2026-11-16T22:12:52.089Z",
+    "skinport": "2026-11-16T22:12:52.305Z",
+    "csfloat": "2026-11-16T22:12:52.716Z",
+    "buff163": "2026-11-16T22:12:52.530Z",
+    "cotacao": "2026-11-16T22:12:51.882Z"
+  },
+  "cotacao_usd_brl": 5.7833,
+  "atualizando": false
+}
+```
+
+`POST /api/precos/atualizar` devolve o mesmo formato com o campo `resultado` a mais:
+`[{ "fonte": "steam", "ok": true }, { "fonte": "skinport", "ok": false, "erro": "timeout" }, ...]`.
 
 ---
 
@@ -458,7 +483,7 @@ usuarios 1 ──── N itens_inventario
 | `nome` | `VARCHAR(100) NOT NULL` | Nome |
 | `email` | `VARCHAR(255) NOT NULL UNIQUE` | E-mail de login (minúsculas) |
 | `senha_hash` | `VARCHAR(100) NOT NULL` | Hash bcrypt da senha |
-| `criado_em` | `TIMESTAMP DEFAULT now()` | Data do cadastro |
+| `criado_em` | `TIMESTAMPTZ DEFAULT now()` | Data do cadastro |
 
 ### `itens_inventario`
 | Coluna | Tipo | Descrição |
@@ -470,14 +495,17 @@ usuarios 1 ──── N itens_inventario
 | `stattrak` | `BOOLEAN NOT NULL DEFAULT false` | Se a skin é StatTrak |
 | `preco_pago` | `NUMERIC(12,2) NOT NULL` | Valor pago em R$ |
 | `data_compra` | `DATE` | Data da compra (opcional) |
-| `criado_em` | `TIMESTAMP DEFAULT now()` | Data do cadastro |
+| `criado_em` | `TIMESTAMPTZ DEFAULT now()` | Data do cadastro |
 
 ### `cache_precos`
 | Coluna | Tipo | Descrição |
 |---|---|---|
 | `fonte` | `VARCHAR(20) PRIMARY KEY` | `steam`, `skinport`, `csfloat`, `buff163` ou `cotacao` |
 | `conteudo` | `JSONB NOT NULL` | Preços normalizados em USD (`{ "<market_hash_name>": { "preco", "fases"? } }`) ou, na linha `cotacao`, `{ "valor", "data" }` |
-| `atualizado_em` | `TIMESTAMP NOT NULL` | Data e hora do download |
+| `atualizado_em` | `TIMESTAMPTZ NOT NULL` | Data e hora do download |
+
+As datas e horas usam `TIMESTAMPTZ` (com fuso), para a hora sair certa mesmo com o banco em UTC
+e o Node em outro fuso. Bancos criados com `TIMESTAMP` são convertidos automaticamente pelo `schema.sql`.
 
 O desgaste, o preço atual e o lucro **não são salvos**: são calculados pelo service a cada requisição.
 
@@ -720,7 +748,8 @@ backend/tests/
 │   ├── catalogo.service.test.js     # carga, busca, limite, 503 sem catálogo
 │   ├── preco.service.test.js        # formato de cada fonte, conversão para R$, fases, falha parcial, cache
 │   ├── inventario.service.test.js   # desgaste, market_hash_name, valores, validações, CRUD, isolamento
-│   └── inventario.listagem.test.js  # filtros, ordenação e resumo
+│   ├── inventario.listagem.test.js  # filtros, ordenação e resumo
+│   └── agendador.test.js            # quando o catálogo e os preços são baixados de novo (relógio e timers falsos)
 └── integration/
     └── api.test.js                  # rotas HTTP de ponta a ponta com Supertest
 ```
@@ -734,6 +763,7 @@ O que é coberto:
 | Catálogo | Busca sem acento e em qualquer ordem; limite; falha no download mantém o catálogo anterior; 503 antes de carregar |
 | Preços | Extração do preço de cada fonte; conversão para R$; fases das Dopplers; fonte que falha mantém a cópia anterior; downloads simultâneos viram um só; cache restaurado do banco; validade de 24h |
 | Inventário | Valor atual com troca de fonte, menor preço, lucro, variação e "sem preço"; todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
+| Agendador e status | Nada é baixado com tudo em dia; catálogo e preços baixados de novo com 24h; catálogo que falhou é tentado na hora seguinte sem travar os preços; verificações sobrepostas viram uma; timer a cada hora até `parar()`; status com a fonte mais antiga; atualização manual com falha parcial (200) e total (502) |
 | Listagem e resumo | Filtros por arma, desgaste e StatTrak (sozinhos e combinados); ordenação por lucro, valor e data com itens sem preço/data no fim; filtros inválidos ou repetidos → 400; totais, variação e destaques do resumo; inventário vazio |
 | API | Rotas protegidas sem token → 401; `/resumo` não é confundido com um id; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
 

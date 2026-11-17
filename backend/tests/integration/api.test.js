@@ -160,6 +160,60 @@ describe('API', () => {
     });
   });
 
+  describe('preços', () => {
+    test('GET /api/precos/status é público e traz a data de cada fonte e a cotação', async () => {
+      const res = await request(app).get('/api/precos/status');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        atualizado_em: expect.any(String),
+        fontes: {
+          steam: expect.any(String),
+          skinport: expect.any(String),
+          csfloat: expect.any(String),
+          buff163: expect.any(String),
+          cotacao: expect.any(String),
+        },
+        cotacao_usd_brl: 5,
+        atualizando: false,
+      });
+    });
+
+    test('POST /api/precos/atualizar exige token', async () => {
+      const res = await request(app).post('/api/precos/atualizar');
+      expect(res.status).toBe(401);
+    });
+
+    test('POST /api/precos/atualizar baixa de novo e devolve o resultado de cada fonte', async () => {
+      const token = await registrar();
+      const res = await request(app).post('/api/precos/atualizar').set(auth(token));
+      expect(res.status).toBe(200);
+      expect(res.body.resultado).toEqual([
+        { fonte: 'steam', ok: true },
+        { fonte: 'skinport', ok: true },
+        { fonte: 'csfloat', ok: true },
+        { fonte: 'buff163', ok: true },
+        { fonte: 'cotacao', ok: true },
+      ]);
+      expect(res.body.atualizado_em).toEqual(expect.any(String));
+    });
+
+    test('POST /api/precos/atualizar com todas as fontes fora do ar → 502', async () => {
+      const foraDoAr = async () => {
+        throw new Error('fora do ar');
+      };
+      app = criarApp(
+        await criarContextosDeTeste({
+          precosAtualizados: false,
+          opcoesPreco: { baixarPrecos: foraDoAr, baixarCotacao: foraDoAr },
+        }),
+      );
+      const token = await registrar();
+      const res = await request(app).post('/api/precos/atualizar').set(auth(token));
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({ erro: 'Não foi possível atualizar os preços: todas as fontes falharam' });
+    });
+  });
+
   describe('inventário', () => {
     let token;
     beforeEach(async () => {

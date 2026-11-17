@@ -218,3 +218,88 @@ describe('precoService', () => {
     });
   });
 });
+
+describe('precoService: status e atualização manual', () => {
+  const falhaSempre = async () => {
+    throw new Error('fora do ar');
+  };
+
+  test('status antes de qualquer download: tudo null', async () => {
+    const { precoService } = await criarPrecoServiceDeTeste({ atualizado: false });
+    expect(precoService.status()).toEqual({
+      atualizado_em: null,
+      fontes: { steam: null, skinport: null, csfloat: null, buff163: null, cotacao: null },
+      cotacao_usd_brl: null,
+      atualizando: false,
+    });
+  });
+
+  test('status depois do download: data de cada fonte, a mais antiga e a cotação', async () => {
+    const relogio = { agora: new Date('2026-11-16T12:00:00Z') };
+    let falharSteam = false;
+    const { precoService } = await criarPrecoServiceDeTeste({
+      agora: () => relogio.agora,
+      baixarPrecos: async (fonte) => {
+        if (fonte === 'steam' && falharSteam) throw new Error('timeout');
+        return structuredClone(PRECOS_BRUTOS[fonte]);
+      },
+    });
+
+    // Um dia depois a Steam falha: ela fica com a data antiga e as outras com a nova.
+    relogio.agora = new Date('2026-11-17T12:00:00Z');
+    falharSteam = true;
+    await precoService.atualizar();
+
+    const status = precoService.status();
+    expect(status.fontes.steam).toEqual(new Date('2026-11-16T12:00:00Z'));
+    expect(status.fontes.skinport).toEqual(new Date('2026-11-17T12:00:00Z'));
+    expect(status.atualizado_em).toEqual(new Date('2026-11-16T12:00:00Z'));
+    expect(status.cotacao_usd_brl).toBe(5);
+  });
+
+  test('atualizando = true enquanto o download está em andamento', async () => {
+    let liberar;
+    const espera = new Promise((resolve) => {
+      liberar = resolve;
+    });
+    const { precoService } = await criarPrecoServiceDeTeste({
+      atualizado: false,
+      baixarCotacao: async () => {
+        await espera;
+        return { ...COTACAO };
+      },
+    });
+
+    const andamento = precoService.atualizar();
+    expect(precoService.status().atualizando).toBe(true);
+    liberar();
+    await andamento;
+    expect(precoService.status().atualizando).toBe(false);
+  });
+
+  test('atualizarAgora devolve o resultado de cada fonte e o novo status', async () => {
+    const { precoService } = await criarPrecoServiceDeTeste({ atualizado: false });
+    const resposta = await precoService.atualizarAgora();
+    expect(resposta.resultado).toHaveLength(5);
+    expect(resposta.atualizado_em).toEqual(expect.any(Date));
+    expect(resposta.cotacao_usd_brl).toBe(5);
+  });
+
+  test('atualizarAgora com algumas fontes falhando → resposta normal, com as falhas no resultado', async () => {
+    const { precoService } = await criarPrecoServiceDeTeste({ atualizado: false, baixarCotacao: falhaSempre });
+    const { resultado } = await precoService.atualizarAgora();
+    expect(resultado.find((r) => r.fonte === 'cotacao')).toMatchObject({ ok: false, erro: 'fora do ar' });
+  });
+
+  test('atualizarAgora com todas as fontes falhando → 502', async () => {
+    const { precoService } = await criarPrecoServiceDeTeste({
+      atualizado: false,
+      baixarPrecos: falhaSempre,
+      baixarCotacao: falhaSempre,
+    });
+    await expect(precoService.atualizarAgora()).rejects.toMatchObject({
+      status: 502,
+      message: 'Não foi possível atualizar os preços: todas as fontes falharam',
+    });
+  });
+});
