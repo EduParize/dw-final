@@ -22,6 +22,14 @@ describe('catalogoService', () => {
       await expect(service.carregar()).rejects.toThrow('sem nenhuma skin válida');
     });
 
+    test('status: total de skins e data do último download que deu certo', async () => {
+      const agora = new Date('2026-11-16T12:00:00Z');
+      const service = criarCatalogoService({ baixarSkins: async () => SKINS, agora: () => agora });
+      expect(service.status()).toEqual({ total_skins: 0, atualizado_em: null });
+      await service.carregar();
+      expect(service.status()).toEqual({ total_skins: SKINS.length, atualizado_em: agora });
+    });
+
     test('mantém o catálogo anterior se um novo download falhar', async () => {
       let falhar = false;
       const service = criarCatalogoService({

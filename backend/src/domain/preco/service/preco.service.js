@@ -1,3 +1,4 @@
+import { AppError } from '../../common/errors/index.js';
 import { FONTE_COTACAO, FONTES_PRECO, VALIDADE_CACHE_MS } from '../entity/preco.constants.js';
 
 /** Primeiro valor que é um número positivo, ou null. */
@@ -100,7 +101,52 @@ export function criarPrecoService({ precoRepository, baixarPrecos, baixarCotacao
     });
   }
 
+  /**
+   * Baixa todas as fontes e a cotação. Uma fonte que falha mantém a cópia anterior.
+   * Chamadas simultâneas reaproveitam a mesma atualização em andamento.
+   * Devolve [{ fonte, ok, erro? }].
+   */
+  function atualizar() {
+    atualizacaoEmAndamento ??= executarAtualizacao().finally(() => {
+      atualizacaoEmAndamento = null;
+    });
+    return atualizacaoEmAndamento;
+  }
+
+  /**
+   * Data de cada fonte no cache, a cotação atual e se há download em andamento.
+   * `atualizado_em` é a data da fonte mais antiga (o que a tela mostra como "Preços atualizados em"),
+   * ou null enquanto alguma fonte nunca foi baixada.
+   */
+  function status() {
+    const fontes = Object.fromEntries(
+      [...FONTES_PRECO, FONTE_COTACAO].map((fonte) => [fonte, cache.get(fonte)?.atualizadoEm ?? null]),
+    );
+    const datas = Object.values(fontes);
+    const atualizadoEm = datas.includes(null) ? null : new Date(Math.min(...datas.map((d) => d.getTime())));
+    return {
+      atualizado_em: atualizadoEm,
+      fontes,
+      cotacao_usd_brl: cache.get(FONTE_COTACAO)?.conteudo?.valor ?? null,
+      atualizando: atualizacaoEmAndamento !== null,
+    };
+  }
+
   return {
+    status,
+
+    /**
+     * Atualização pedida pelo usuário (POST /api/precos/atualizar).
+     * Devolve o resultado de cada fonte e o novo status; se nenhuma fonte deu certo → 502.
+     */
+    async atualizarAgora() {
+      const resultado = await atualizar();
+      if (!resultado.some((r) => r.ok)) {
+        throw new AppError('Não foi possível atualizar os preços: todas as fontes falharam', 502);
+      }
+      return { resultado, ...status() };
+    },
+
     /** Lê o cache salvo no banco para a memória (usado na inicialização). */
     async carregarDoBanco() {
       const linhas = await precoRepository.listar();
@@ -110,24 +156,14 @@ export function criarPrecoService({ precoRepository, baixarPrecos, baixarCotacao
       return linhas.length;
     },
 
-    /**
-     * Baixa todas as fontes e a cotação. Uma fonte que falha mantém a cópia anterior.
-     * Chamadas simultâneas reaproveitam a mesma atualização em andamento.
-     * Devolve [{ fonte, ok, erro? }].
-     */
-    atualizar() {
-      atualizacaoEmAndamento ??= executarAtualizacao().finally(() => {
-        atualizacaoEmAndamento = null;
-      });
-      return atualizacaoEmAndamento;
-    },
+    atualizar,
 
-    /** true se falta alguma fonte no cache ou se alguma tem mais de 24h. */
+    /** true se falta alguma fonte no cache ou se alguma tem 24h ou mais. */
     precisaAtualizar() {
       const limite = agora().getTime() - VALIDADE_CACHE_MS;
       return [...FONTES_PRECO, FONTE_COTACAO].some((fonte) => {
         const item = cache.get(fonte);
-        return !item || item.atualizadoEm.getTime() < limite;
+        return !item || item.atualizadoEm.getTime() <= limite;
       });
     },
 

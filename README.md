@@ -68,6 +68,7 @@ backend/src/
 ├── server.js                       # ponto de entrada: carrega .env, conecta no banco, sobe o app
 ├── configuration/
 │   ├── env.js                      # leitura das variáveis de ambiente
+│   ├── agendador.js                # confere a cada hora e baixa de novo catálogo/preços com 24h ou mais
 │   └── factory/                    # monta service + repository de cada contexto
 ├── application/
 │   ├── controllers/
@@ -272,7 +273,8 @@ servidor inicia
   ├─ 4. Se faltar alguma fonte ou o cache tiver mais de 24h, em segundo plano:
   │      ├─ baixa os arquivos de preço (Steam, Skinport, CSFloat, Buff163) e a cotação USD-BRL
   │      └─ salva cada fonte na tabela cache_precos com a data de atualização
-  └─ 5. Agenda os passos 2 e 4 para rodarem de novo a cada 24h
+  └─ 5. Inicia o agendador: a cada 1h confere o catálogo e os preços e baixa de novo o que
+         tiver 24h ou mais (ou que nunca carregou). Uma falha é tentada de novo na hora seguinte.
 
 As consultas de preço usam só o cache em memória; nenhuma requisição do usuário dispara download.
 Se algum download falhar → mantém a cópia anterior do cache e registra o erro no log.
@@ -359,9 +361,11 @@ Login: POST /api/auth/login { email, senha }
 
 ```text
 [React]   ─> GET /api/inventario/resumo   (com token)
-[Service] soma o preço pago e o valor atual de todos os itens do usuário e calcula:
-          total pago, valor total atual, lucro total, variação %,
-          skin mais valorizada e skin mais desvalorizada
+[Service] monta todos os itens do usuário (com preços) e calcula:
+          ├─ total pago: soma de todos os itens
+          ├─ valor total atual e lucro total: só os itens com preço
+          ├─ variação %: lucro total ÷ preço pago pelos itens com preço × 100
+          └─ skin mais valorizada e mais desvalorizada: maior e menor variação %
 [React]   mostra os 4 cards do topo da tela
 ```
 
@@ -375,11 +379,34 @@ Login: POST /api/auth/login { email, senha }
   `senha_atual`).
 - `DELETE /api/usuarios/me`: exclui a conta e todas as skins dela (`ON DELETE CASCADE`).
 
-### 6.7 Atualização manual dos preços
+### 6.7 Status e atualização manual dos preços
 
-- `POST /api/precos/atualizar`: força o download dos preços e da cotação fora do horário agendado.
-- `GET /api/precos/status`: informa a data da última atualização de cada fonte. O frontend mostra
-  "Preços atualizados em 13/11/2026 17:12".
+- `GET /api/precos/status` (público): data da última atualização de cada fonte e a cotação atual.
+  O frontend mostra "Preços atualizados em 13/11/2026 17:12" usando `atualizado_em`, que é a data
+  da fonte mais antiga (fica `null` enquanto alguma fonte nunca foi baixada).
+- `POST /api/precos/atualizar` (com token): força o download dos preços e da cotação fora do horário
+  agendado e espera terminar (alguns segundos). Se já houver um download em andamento, reaproveita
+  o mesmo. Responde 200 se ao menos uma fonte deu certo, com o resultado de cada uma; 502 se todas
+  falharam (o cache anterior continua valendo).
+
+Exemplo de `GET /api/precos/status`:
+```json
+{
+  "atualizado_em": "2026-11-16T22:12:51.882Z",
+  "fontes": {
+    "steam": "2026-11-16T22:12:52.089Z",
+    "skinport": "2026-11-16T22:12:52.305Z",
+    "csfloat": "2026-11-16T22:12:52.716Z",
+    "buff163": "2026-11-16T22:12:52.530Z",
+    "cotacao": "2026-11-16T22:12:51.882Z"
+  },
+  "cotacao_usd_brl": 5.7833,
+  "atualizando": false
+}
+```
+
+`POST /api/precos/atualizar` devolve o mesmo formato com o campo `resultado` a mais:
+`[{ "fonte": "steam", "ok": true }, { "fonte": "skinport", "ok": false, "erro": "timeout" }, ...]`.
 
 ---
 
@@ -437,7 +464,9 @@ porque o preço geral de "Karambit | Doppler" é o da fase mais barata, e não o
   floats 0.16 e 0.37 recebem o mesmo preço.
 - Os preços variam entre os sites (a Steam costuma ser mais cara). A tela sempre mostra a fonte usada.
 - Se uma skin não tiver preço em nenhuma fonte, o valor atual aparece como "sem preço" e ela
-  não entra no cálculo do lucro total.
+  não entra no valor atual total, no lucro total nem na variação do resumo (mas entra no total pago).
+- Skins com preço pago zero (ganhas em drop) entram no lucro total, mas não têm variação % e não
+  concorrem a mais valorizada/desvalorizada.
 
 ---
 
@@ -454,7 +483,7 @@ usuarios 1 ──── N itens_inventario
 | `nome` | `VARCHAR(100) NOT NULL` | Nome |
 | `email` | `VARCHAR(255) NOT NULL UNIQUE` | E-mail de login (minúsculas) |
 | `senha_hash` | `VARCHAR(100) NOT NULL` | Hash bcrypt da senha |
-| `criado_em` | `TIMESTAMP DEFAULT now()` | Data do cadastro |
+| `criado_em` | `TIMESTAMPTZ DEFAULT now()` | Data do cadastro |
 
 ### `itens_inventario`
 | Coluna | Tipo | Descrição |
@@ -466,14 +495,17 @@ usuarios 1 ──── N itens_inventario
 | `stattrak` | `BOOLEAN NOT NULL DEFAULT false` | Se a skin é StatTrak |
 | `preco_pago` | `NUMERIC(12,2) NOT NULL` | Valor pago em R$ |
 | `data_compra` | `DATE` | Data da compra (opcional) |
-| `criado_em` | `TIMESTAMP DEFAULT now()` | Data do cadastro |
+| `criado_em` | `TIMESTAMPTZ DEFAULT now()` | Data do cadastro |
 
 ### `cache_precos`
 | Coluna | Tipo | Descrição |
 |---|---|---|
 | `fonte` | `VARCHAR(20) PRIMARY KEY` | `steam`, `skinport`, `csfloat`, `buff163` ou `cotacao` |
 | `conteudo` | `JSONB NOT NULL` | Preços normalizados em USD (`{ "<market_hash_name>": { "preco", "fases"? } }`) ou, na linha `cotacao`, `{ "valor", "data" }` |
-| `atualizado_em` | `TIMESTAMP NOT NULL` | Data e hora do download |
+| `atualizado_em` | `TIMESTAMPTZ NOT NULL` | Data e hora do download |
+
+As datas e horas usam `TIMESTAMPTZ` (com fuso), para a hora sair certa mesmo com o banco em UTC
+e o Node em outro fuso. Bancos criados com `TIMESTAMP` são convertidos automaticamente pelo `schema.sql`.
 
 O desgaste, o preço atual e o lucro **não são salvos**: são calculados pelo service a cada requisição.
 
@@ -535,6 +567,17 @@ Exemplo de item do catálogo:
 | `POST` | `/api/inventario` 🔒 | Cadastra uma skin | 201, 400, 401, 404 |
 | `PUT` | `/api/inventario/:id` 🔒 | Edita float, StatTrak, preço pago ou data da compra | 200, 400, 401, 404 |
 | `DELETE` | `/api/inventario/:id` 🔒 | Remove uma skin | 204, 401, 404 |
+
+Filtros e ordenação de `GET /api/inventario` (todos opcionais e combináveis; valor inválido → 400):
+
+| Parâmetro | Valores | Observação |
+|---|---|---|
+| `arma` | ex.: `AK-47`, `AWP` | Nome exato da arma, sem diferenciar maiúsculas |
+| `desgaste` | `Factory New`, `Minimal Wear`, `Field-Tested`, `Well-Worn`, `Battle-Scarred` | Facas sem pintura não têm desgaste e não aparecem nesse filtro |
+| `stattrak` | `true`, `false` | |
+| `ordenar` | `lucro`, `valor`, `data` | Sempre do maior para o menor (`data` = data da compra). Itens sem preço ou sem data vão para o fim. Sem `ordenar`, os cadastros mais recentes vêm primeiro |
+
+Exemplo: `GET /api/inventario?arma=AK-47&stattrak=true&ordenar=lucro`
 
 ### Preços
 | Método | Rota | Descrição | Respostas |
@@ -600,6 +643,28 @@ Resposta `201` (valores ilustrativos):
   "criado_em": "2026-11-16T18:05:00.000Z"
 }
 ```
+
+### Exemplo: `GET /api/inventario/resumo`
+
+```json
+{
+  "quantidade_itens": 5,
+  "quantidade_sem_preco": 1,
+  "total_pago": 686.00,
+  "valor_atual_total": 8809.70,
+  "lucro_total": 8124.70,
+  "variacao_percentual": 1186.09,
+  "mais_valorizada": {
+    "id": 1, "skin_id": "skin-xxxxx", "arma": "AK-47", "nome": "Redline", "fase": null,
+    "imagem": "https://...", "market_hash_name": "AK-47 | Redline (Field-Tested)",
+    "preco_pago": 85.00, "valor_atual": 217.80, "lucro": 132.80, "variacao_percentual": 156.24
+  },
+  "mais_desvalorizada": { "...": "mesmo formato" }
+}
+```
+
+Com o inventário vazio, os totais vêm `0` e `variacao_percentual`, `mais_valorizada` e
+`mais_desvalorizada` vêm `null`.
 
 ### Exemplos de erro
 ```json
@@ -682,7 +747,9 @@ backend/tests/
 │   ├── usuario.service.test.js      # validações, hash bcrypt, login, JWT, troca de senha
 │   ├── catalogo.service.test.js     # carga, busca, limite, 503 sem catálogo
 │   ├── preco.service.test.js        # formato de cada fonte, conversão para R$, fases, falha parcial, cache
-│   └── inventario.service.test.js   # desgaste, market_hash_name, validações, CRUD, isolamento entre usuários
+│   ├── inventario.service.test.js   # desgaste, market_hash_name, valores, validações, CRUD, isolamento
+│   ├── inventario.listagem.test.js  # filtros, ordenação e resumo
+│   └── agendador.test.js            # quando o catálogo e os preços são baixados de novo (relógio e timers falsos)
 └── integration/
     └── api.test.js                  # rotas HTTP de ponta a ponta com Supertest
 ```
@@ -696,7 +763,9 @@ O que é coberto:
 | Catálogo | Busca sem acento e em qualquer ordem; limite; falha no download mantém o catálogo anterior; 503 antes de carregar |
 | Preços | Extração do preço de cada fonte; conversão para R$; fases das Dopplers; fonte que falha mantém a cópia anterior; downloads simultâneos viram um só; cache restaurado do banco; validade de 24h |
 | Inventário | Valor atual com troca de fonte, menor preço, lucro, variação e "sem preço"; todas as faixas de desgaste; `market_hash_name` comum, StatTrak, faca e faca sem pintura; float fora do intervalo; StatTrak inexistente; preço e data inválidos; data futura no fuso do Brasil |
-| API | Rotas protegidas sem token → 401; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
+| Agendador e status | Nada é baixado com tudo em dia; catálogo e preços baixados de novo com 24h; catálogo que falhou é tentado na hora seguinte sem travar os preços; verificações sobrepostas viram uma; timer a cada hora até `parar()`; status com a fonte mais antiga; atualização manual com falha parcial (200) e total (502) |
+| Listagem e resumo | Filtros por arma, desgaste e StatTrak (sozinhos e combinados); ordenação por lucro, valor e data com itens sem preço/data no fim; filtros inválidos ou repetidos → 400; totais, variação e destaques do resumo; inventário vazio |
+| API | Rotas protegidas sem token → 401; `/resumo` não é confundido com um id; CRUD completo; PUT ignora `skin_id`/`usuario_id`; um usuário não vê, edita nem exclui as skins de outro; JSON malformado → 400; rota inexistente → 404 |
 
 Os repositories (SQL) e as factories não são cobertos por esses testes, porque dependem do
 PostgreSQL. Eles são verificados rodando a API com o banco (Docker).
