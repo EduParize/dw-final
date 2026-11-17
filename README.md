@@ -180,36 +180,45 @@ HTTP /api  -->  backend (Express)
 ```text
 frontend/src/
 ├── main.jsx                    # ponto de entrada
-├── app/                        # App, router, layout, providers e rota protegida
+├── app/
+│   ├── App.jsx                 # AuthProvider + RouterProvider
+│   ├── router.jsx              # rotas públicas e protegidas
+│   └── Layout.jsx              # topo com navegação, nome do usuário e botão sair
 ├── pages/
-│   ├── login/                  # login
-│   ├── registro/               # criação de conta
-│   ├── perfil/                 # dados da conta, troca de senha, excluir conta
-│   ├── inventario/             # tela principal (resumo, filtros, cards)
-│   ├── cadastro/               # cadastro e edição de skin
-│   └── detalhe/                # detalhes de uma skin
+│   ├── login/                  # LoginPage
+│   ├── registro/               # RegistroPage
+│   ├── perfil/                 # PerfilPage: dados da conta, troca de senha, excluir conta
+│   ├── inventario/             # InventarioPage: status dos preços, resumo, filtros e cards
+│   ├── cadastro/               # CadastroPage (busca no catálogo + formulário) e EdicaoPage
+│   └── detalhe/                # DetalhePage: dados, régua de float, preços por site, editar/excluir
 ├── features/
 │   ├── auth/
 │   │   ├── api/                # registrar, login, perfil, editarPerfil, excluirConta
-│   │   ├── components/         # FormLogin, FormRegistro, RotaProtegida
-│   │   └── hooks/              # useAuth (contexto com usuário e token)
+│   │   ├── components/         # FormLogin, FormRegistro, FormDadosConta, FormTrocarSenha,
+│   │   │                       # ExcluirConta, RotaProtegida, RotaPublica
+│   │   ├── hooks/              # useAuth (contexto com usuário e token)
+│   │   └── lib/                # validações do formulário (só para dar retorno rápido)
 │   ├── inventario/
 │   │   ├── api/                # listar, buscarPorId, cadastrar, editar, excluir, resumo
-│   │   ├── components/         # CardSkin, ResumoInventario, Filtros, FormSkin, BarraFloat
+│   │   ├── components/         # CardSkin, ResumoInventario, Filtros, FormSkin, BarraFloat,
+│   │   │                       # ValorLucro, CabecalhoSkin
 │   │   ├── hooks/              # useInventario, useResumo, useItem
-│   │   └── lib/                # prévia do desgaste, formatação de moeda
+│   │   └── lib/                # faixas de desgaste (prévia enquanto digita o float)
 │   ├── catalogo/
-│   │   ├── api/                # buscar skins no catálogo
+│   │   ├── api/                # buscar e obter skins do catálogo
 │   │   ├── components/         # BuscaCatalogo (autocomplete com imagem)
-│   │   └── hooks/              # useBuscaCatalogo
+│   │   └── hooks/              # useBuscaCatalogo (espera 300 ms), useSkinCatalogo
 │   └── preco/
 │       ├── api/                # status e atualização dos preços
 │       ├── components/         # ComparacaoPrecos, StatusPrecos
-│       └── hooks/              # usePrecos
+│       ├── hooks/              # usePrecos
+│       └── lib/                # nomes e ordem das fontes
 ├── shared/
 │   ├── api/client.js           # fetch base, prefixo /api, header Authorization e tratamento de erros
-│   └── components/             # botões, modais, loaders genéricos
-└── styles/                     # CSS global
+│   ├── hooks/useRequisicao.js  # loading/erro/dados com cancelamento da requisição anterior
+│   ├── lib/formatacao.js       # moeda (R$), porcentagem, datas no fuso de São Paulo
+│   └── components/             # Botao, Campo, Modal, Carregando, Spinner, MensagemErro, NaoEncontrado
+└── styles/global.css           # tema escuro (variáveis CSS) e todos os estilos
 ```
 
 ### Camadas
@@ -226,7 +235,21 @@ Regras de negócio (hash de senha, validação de float, cálculo de lucro, conv
 **service** do backend. Validações no formulário do React servem só para melhorar a experiência do
 usuário. Em desenvolvimento, o Vite encaminha `/api` para o backend (proxy).
 
-Rotas do frontend: `/login` e `/registro` são públicas; todas as outras exigem estar logado.
+Rotas do frontend:
+
+| Rota | Tela | Acesso |
+|---|---|---|
+| `/login` | Login | Pública (quem já está logado vai para `/inventario`) |
+| `/registro` | Criação de conta | Pública |
+| `/inventario` | Resumo, filtros e cards (filtros ficam na URL, ex.: `?arma=AK-47&ordenar=lucro`) | Logado |
+| `/inventario/nova` | Cadastro de skin | Logado |
+| `/inventario/:id` | Detalhe da skin | Logado |
+| `/inventario/:id/editar` | Edição da skin | Logado |
+| `/perfil` | Minha conta | Logado |
+
+Sessão: o token fica no `localStorage` (`dw-final:token`). Ao abrir o app com um token salvo, o
+frontend chama `GET /api/usuarios/me`; qualquer resposta 401 de uma requisição com token desloga e
+volta para `/login`.
 
 ---
 

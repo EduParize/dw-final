@@ -86,12 +86,16 @@ Layered flow: `route → middleware/auth → controller → service → reposito
 
 ## Frontend
 
-Still a scaffold: only `App.jsx` (an API health check), `main.jsx` and `global.css` exist. The planned structure is feature-based:
-- `pages/` compose `features/<context>/{api,hooks,components}`;
-- `shared/api/client.js` will be the only `fetch` wrapper. It adds the `/api` prefix and the Bearer token, and logs out on 401;
-- pages never call `fetch` directly, and business rules stay in the backend.
+React 19 + react-router-dom 7 (`createBrowserRouter`), plain CSS (one `styles/global.css` with CSS variables, dark theme), no UI library and no test runner. Feature-based:
+- `pages/` compose `features/<context>/{api,hooks,components,lib}`. Pages never call `fetch` and hold no business rules.
+- `shared/api/client.js` is the only `fetch` wrapper: `/api` prefix (`VITE_API_URL`), Bearer token from `localStorage` (`dw-final:token`), throws `ErroApi(message, status)` with the backend's `erro`. A 401 on a request that carried a token clears it and calls the callback registered by `useAuth` (logout).
+- `features/auth/hooks/useAuth.jsx` is the session context (`AuthProvider`). `RotaProtegida`/`RotaPublica` guard routes in `app/router.jsx`.
+- Data hooks use `shared/hooks/useRequisicao.js` (`{ dados, carregando, erro, recarregar }`, aborts the previous request).
+- Formatting lives in `shared/lib/formatacao.js` (pt-BR currency, signed %, dates; `"YYYY-MM-DD"` is formatted without `Date` to avoid timezone shifts).
+- Inventory filters live in the URL query string and are sent to the backend as-is; the frontend never filters or sorts itself. The wear ranges in `features/inventario/lib/desgaste.js` mirror the backend only for the live preview and the float bar.
+- Profit is shown with color **and** an arrow/sign; price highlights carry text labels, not color only.
 
-Routes `/login` and `/registro` are public; all others are protected. `VITE_API_URL` defaults to `/api`.
+Routes: `/login`, `/registro` (public); `/inventario`, `/inventario/nova`, `/inventario/:id`, `/inventario/:id/editar`, `/perfil` (protected).
 
 ## Conventions
 
