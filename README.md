@@ -161,7 +161,6 @@ dw-final/
 ├── docker-compose.yml        Postgres + backend + frontend (produção)
 ├── docker-compose.dev.yml    Mesmo conjunto com hot reload
 ├── .env.example
-├── KANBAN.md                 Lista de tarefas do projeto
 └── README.md
 ```
 
@@ -865,5 +864,3 @@ PostgreSQL. Eles são verificados rodando a API com o banco (Docker).
 | 1 | Backend: CRUD de usuários (bcrypt + JWT), CRUD de skins, services, repositories, integração com as fontes externas e banco |
 | 2 | Frontend: feature `inventario` e tela de inventário (resumo, filtros, cards) |
 | 3 | Frontend: features `auth`, `catalogo` e `preco`, telas de login/registro/perfil, cadastro/edição e detalhes, estilo geral |
-
-O andamento das tarefas fica no [KANBAN.md](KANBAN.md).
