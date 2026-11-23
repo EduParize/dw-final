@@ -19,6 +19,115 @@ pagou**, se ela é **StatTrak** e a **data da compra**. O sistema mostra o **val
 
 ---
 
+## Como rodar o projeto
+
+### Pré-requisitos
+
+- [Git](https://git-scm.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/). **Ele precisa estar aberto** antes
+  de rodar qualquer comando `docker`.
+- Node.js 22+ só é necessário para rodar sem Docker.
+
+### Passo a passo (com Docker, recomendado)
+
+**1. Clone o repositório e entre na pasta**
+
+```bash
+git clone https://github.com/EduParize/dw-final.git
+cd dw-final
+```
+
+**2. Crie o arquivo `.env` a partir do exemplo**
+
+```bash
+cp .env.example .env              # Git Bash, Linux ou macOS
+Copy-Item .env.example .env       # PowerShell
+```
+
+Os valores do exemplo já funcionam para rodar localmente. Fora do ambiente local, troque o
+`JWT_SECRET` por um valor longo e aleatório.
+
+**3. Abra o Docker Desktop** e espere ele terminar de iniciar.
+
+**4. Suba o projeto**
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+A primeira vez demora alguns minutos, porque as imagens são baixadas e as dependências instaladas.
+Depois disso, o backend cria as tabelas sozinho e baixa o catálogo de skins, os preços e a cotação
+do dólar.
+
+**5. Acesse**
+
+| O quê | Endereço |
+|---|---|
+| Site | http://localhost:5173 |
+| API (teste de saúde) | http://localhost:3001/api/health |
+| PostgreSQL | `localhost:5433`, banco `dw_final`, usuário e senha `dwfinal` |
+
+Crie uma conta em **Criar conta** e cadastre as skins pelo botão **+ Adicionar skin**.
+
+**6. Para parar**, aperte `Ctrl + C` no terminal ou rode:
+
+```bash
+docker compose -f docker-compose.dev.yml down       # para os containers e mantém os dados
+docker compose -f docker-compose.dev.yml down -v    # para e APAGA o banco (contas e skins)
+```
+
+As alterações no código aparecem na hora (hot reload), sem precisar subir de novo.
+
+### Versão de produção
+
+```bash
+docker compose up --build
+```
+
+O site fica em http://localhost:8080. O nginx serve o build do React e repassa o `/api` para o backend.
+
+### Sem Docker
+
+É preciso ter um PostgreSQL rodando. Pode ser só o do compose:
+
+```bash
+docker compose -f docker-compose.dev.yml up postgres
+```
+
+No `.env`, troque o host do banco para `localhost:5433`:
+
+```bash
+DATABASE_URL=postgres://dwfinal:dwfinal@localhost:5433/dw_final
+```
+
+Depois, em dois terminais:
+
+```bash
+# terminal 1: backend
+cd backend
+npm install
+npm run dev             # API em http://localhost:3000/api
+
+# terminal 2: frontend
+cd frontend
+npm install
+npm run dev             # site em http://localhost:5173 (repassa /api para localhost:3000)
+```
+
+O backend lê o `backend/.env` (se existir) e depois o `.env` da raiz.
+
+### Problemas comuns
+
+| Erro | Solução |
+|---|---|
+| `failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine` | O Docker Desktop não está aberto. Abra, espere iniciar e rode o comando de novo. |
+| Backend para com erro de `DATABASE_URL` ou `JWT_SECRET` | Falta o `.env` na raiz (passo 2). |
+| Porta já em uso (`5173`, `3001` ou `5433`) | Feche o programa que está usando a porta ou mude `FRONTEND_DEV_PORT`, `BACKEND_PORT` ou `POSTGRES_PORT` no `.env`. |
+| Rodando sem Docker, o backend não conecta no banco | O `DATABASE_URL` precisa usar `localhost:5433`, não `postgres:5432`. |
+| pgAdmin desktop fecha a conexão com `access violation writing 0x0000000000000000` | No cadastro do servidor, aba **Parameters**, adicione **GSS encmode** = `disable`. |
+
+---
+
 ## 1. Visão geral
 
 ```text
@@ -699,53 +808,7 @@ Com o inventário vazio, os totais vêm `0` e `variacao_percentual`, `mais_valor
 
 ---
 
-## 10. Como executar
-
-### Variáveis de ambiente
-
-```bash
-cp .env.example .env
-```
-
-Troque o `JWT_SECRET` por um valor longo e aleatório. O backend lê o `backend/.env` (se existir)
-e depois o `.env` da raiz.
-
-### Com Docker (recomendado)
-
-```bash
-# desenvolvimento, com hot reload
-docker compose -f docker-compose.dev.yml up --build
-#   frontend: http://localhost:5173
-#   API:      http://localhost:3001/api/health
-
-# produção
-docker compose up --build
-#   app:      http://localhost:8080
-```
-
-### Sem Docker
-
-Pré-requisitos: Node.js 22+ e um PostgreSQL rodando (pode ser só o do compose:
-`docker compose -f docker-compose.dev.yml up postgres`). Nesse caso, use no `.env`
-`DATABASE_URL=postgres://dwfinal:dwfinal@localhost:5433/dw_final`.
-
-```bash
-# backend
-cd backend
-npm install
-npm run dev             # API em http://localhost:3000/api
-
-# frontend
-cd frontend
-npm install
-npm run dev             # app em http://localhost:5173 (proxy de /api para localhost:3000)
-```
-
-Na inicialização, o backend cria as tabelas automaticamente a partir do `schema.sql`.
-
----
-
-## 11. Testes (backend)
+## 10. Testes (backend)
 
 Os testes usam **Jest** e **Supertest** e **não precisam de banco nem de internet**: os
 repositories são trocados por versões em memória e o catálogo vem de uma fixture com um recorte
@@ -795,7 +858,7 @@ PostgreSQL. Eles são verificados rodando a API com o banco (Docker).
 
 ---
 
-## 12. Divisão sugerida da equipe
+## 11. Divisão sugerida da equipe
 
 | Integrante | Responsabilidade |
 |---|---|
